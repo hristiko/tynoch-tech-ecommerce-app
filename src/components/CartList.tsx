@@ -64,12 +64,16 @@ export default function CartList({ initial }: { initial: Cart }) {
                     </button>
                   </div>
                   <div className="mt-3 flex items-center gap-4 sm:mt-0 sm:flex-col sm:items-end sm:gap-2">
-                    <div className="flex items-center rounded-md border border-ink/25 bg-white">
-                      <button type="button" aria-label={`Decrease quantity of ${product.name}`} onClick={() => setQty(product.id, quantity - 1)} disabled={busy || quantity <= 1} className="px-3 py-1.5 disabled:opacity-40">−</button>
-                      <span className="w-8 text-center text-sm tabular-nums" aria-live="polite">{quantity}</span>
-                      <button type="button" aria-label={`Increase quantity of ${product.name}`} onClick={() => setQty(product.id, quantity + 1)} disabled={busy || quantity >= max} className="px-3 py-1.5 disabled:opacity-40">+</button>
-                    </div>
-                    <p className="font-semibold tabular-nums">{formatPrice(lineTotalCents)}</p>
+                    {product.stock < 1 ? (
+                      <p className="text-sm font-semibold text-red-700">Out of stock</p>
+                    ) : (
+                      <div className="flex items-center rounded-md border border-ink/25 bg-white">
+                        <button type="button" aria-label={`Decrease quantity of ${product.name}`} onClick={() => setQty(product.id, quantity - 1)} disabled={busy || quantity <= 1} className="px-3 py-1.5 disabled:opacity-40">−</button>
+                        <span className="w-8 text-center text-sm tabular-nums" aria-live="polite">{quantity}</span>
+                        <button type="button" aria-label={`Increase quantity of ${product.name}`} onClick={() => setQty(product.id, quantity + 1)} disabled={busy || quantity >= max} className="px-3 py-1.5 disabled:opacity-40">+</button>
+                      </div>
+                    )}
+                    <p className="font-semibold tabular-nums">{product.stock < 1 ? "Unavailable" : formatPrice(lineTotalCents)}</p>
                   </div>
                 </div>
               </li>

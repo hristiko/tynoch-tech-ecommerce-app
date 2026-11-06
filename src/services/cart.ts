@@ -39,6 +39,7 @@ export const cartService = {
       await cartRepo.remove(userId, productId);
       throw new NotFoundError("Product is no longer available");
     }
+    if (product.stock < 1) throw new ConflictError("This product is out of stock");
     await cartRepo.upsert({ ...existing, quantity: clampQuantity(quantity, product.stock) });
     return this.get(userId);
   },
