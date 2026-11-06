@@ -17,6 +17,16 @@ describe("cart logic", () => {
     expect(clampQuantity(0, 5)).toBe(1);
   });
 
+  it("does not charge for an item that has gone out of stock", () => {
+    expect(clampQuantity(3, 0)).toBe(0);
+    const cart = buildCart([item("a", 3)], [product({ id: "a", stock: 0, priceCents: 1299 })]);
+    expect(cart.lines).toHaveLength(1); // still visible so the user can remove it
+    expect(cart.lines[0].quantity).toBe(0);
+    expect(cart.lines[0].lineTotalCents).toBe(0);
+    expect(cart.itemCount).toBe(0);
+    expect(cart.subtotalCents).toBe(0);
+  });
+
   it("merges duplicate adds into a single quantity", () => {
     expect(mergeQuantity(undefined, 2, 5)).toBe(2);
     expect(mergeQuantity(2, 2, 5)).toBe(4);

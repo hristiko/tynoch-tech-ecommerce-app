@@ -4,6 +4,8 @@ import type { Cart, CartItemRecord, CartLine, Product } from "@/types";
 /** Pure business rules (no I/O) so they are trivial to unit-test. */
 
 export function clampQuantity(requested: number, stock: number): number {
+  // A sold-out product must never count as a purchasable cart item.
+  if (stock <= 0) return 0;
   return Math.max(1, Math.min(requested, MAX_QTY_PER_ITEM, stock));
 }
 
