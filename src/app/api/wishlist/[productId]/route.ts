@@ -6,9 +6,9 @@ import { productIdSchema } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
-export const DELETE = handle(async (req: Request, { params }: { params: { productId: string } }) => {
+export const DELETE = handle(async (req: Request, { params }: { params: Promise<{ productId: string }> }) => {
   requireSameOrigin(req);
-  const productId = productIdSchema.parse(params.productId);
+  const productId = productIdSchema.parse((await params).productId);
   await wishlistService.remove(await getOrCreateViewerUserId(), productId);
   return ok({ removed: true });
 });

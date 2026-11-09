@@ -9,17 +9,17 @@ const GUEST_ID = /^[0-9a-f-]{36}$/i;
 const ACCOUNT_ID = /^acct-[0-9a-f-]{36}$/i;
 
 /** Guest cookies contain UUIDs only; authenticated accounts use a separate namespace. */
-export function getGuestUserId(): string | null {
-  const value = cookies().get(COOKIE)?.value;
+export async function getGuestUserId(): Promise<string | null> {
+  const value = (await cookies()).get(COOKIE)?.value;
   return value && GUEST_ID.test(value) ? value : null;
 }
 
 /** Only call in a Route Handler where cookies can be written. */
-export function getOrCreateGuestUserId(): string {
-  const existing = getGuestUserId();
+export async function getOrCreateGuestUserId(): Promise<string> {
+  const existing = await getGuestUserId();
   if (existing) return existing;
   const id = randomUUID();
-  cookies().set(COOKIE, id, {
+  (await cookies()).set(COOKIE, id, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -37,10 +37,10 @@ async function getAccountId(): Promise<string | null> {
 }
 
 export async function getViewerUserId(): Promise<string | null> {
-  return (await getAccountId()) ?? getGuestUserId();
+  return (await getAccountId()) ?? (await getGuestUserId());
 }
 
 /** Route Handlers only. Never use an unsigned guest cookie as an account identity. */
 export async function getOrCreateViewerUserId(): Promise<string> {
-  return (await getAccountId()) ?? getOrCreateGuestUserId();
+  return (await getAccountId()) ?? (await getOrCreateGuestUserId());
 }

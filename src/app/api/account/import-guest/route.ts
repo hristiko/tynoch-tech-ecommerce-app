@@ -13,6 +13,6 @@ export const POST = handle(async (req: Request) => {
   const session = await getServerSession(authOptions);
   const accountId = session?.user?.id;
   if (!accountId?.startsWith("acct-")) throw new AppError("Sign in to continue.", 401, "UNAUTHORIZED");
-  const guestId = getGuestUserId();
+  const guestId = await getGuestUserId();
   return ok(guestId ? await importGuestData(guestId, accountId) : { cartItems: 0, wishlistItems: 0 });
 });

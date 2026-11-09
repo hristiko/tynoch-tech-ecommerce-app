@@ -12,9 +12,10 @@ export const metadata: Metadata = { title: "Shop" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-export default async function ProductsPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query = await searchParams;
   const raw = Object.fromEntries(
-    Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v !== "" && v !== undefined)
+    Object.entries(query).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]).filter(([, v]) => v !== "" && v !== undefined)
   );
   const parsed = productQuerySchema.safeParse(raw);
   const invalid = !parsed.success;

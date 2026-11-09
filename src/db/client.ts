@@ -3,7 +3,6 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { env } from "@/lib/env";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __ddb: DynamoDBDocumentClient | undefined;
 }
 

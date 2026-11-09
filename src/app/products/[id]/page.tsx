@@ -25,17 +25,17 @@ async function load(rawId: string): Promise<Product> {
   }
 }
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   try {
-    const p = await load(params.id);
+    const p = await load((await params).id);
     return { title: p.name, description: p.description };
   } catch {
     return { title: "Product" };
   }
 }
 
-export default async function ProductPage({ params }: { params: { id: string } }) {
-  const product = await load(params.id);
+export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
+  const product = await load((await params).id);
   const [related, category, wishlistIds] = await Promise.all([
     catalogService.getRelated(product),
     catalogService.getCategory(product.categorySlug).catch(() => null),
