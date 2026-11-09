@@ -1,0 +1,1006 @@
+diff --git a/.env.example b/.env.example
+index ff83e5e..0fd0992 100644
+--- a/.env.example
++++ b/.env.example
+@@ -8,3 +8,7 @@ AWS_SECRET_ACCESS_KEY=
+ DYNAMODB_TABLE_NAME=tidewell-store
+ # Optional: point to DynamoDB Local (e.g. http://localhost:8000)
+ DYNAMODB_ENDPOINT=
++
++# Local NextAuth credentials-based login (never commit the real secret)
++NEXTAUTH_URL=http://localhost:3000
++NEXTAUTH_SECRET=
+diff --git a/README.md b/README.md
+index 1ec75d7..da3bf4e 100644
+--- a/README.md
++++ b/README.md
+@@ -22,8 +22,13 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React,
+ - Duplicates are prevented at the database level with a conditional write
+ 
+ **User data**
+-- Anonymous visitors get a secure, httpOnly cookie id and a `User` record on first write
+-- Profile form with the same Zod schema validating on the client and server
++- Anonymous visitors can shop using a browser cookie; account sessions take priority when signed in
++- Registration, password-based sign-in and sign-out using NextAuth.js (JWT sessions)
++- Account profiles, password hash records and unique email lookups in DynamoDB (atomic transaction)
++- Guest cart/wishlist items are imported into the account after successful sign-in; existing account quantities win on overlaps
++- Account email is read-only after registration; password reset and email verification are not implemented
++
++See [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations.
+ 
+ **Engineering**
+ - Layered code: UI → services → repositories → DynamoDB
+@@ -40,6 +45,7 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React,
+ | Database | AWS DynamoDB (single-table design, on-demand billing) |
+ | Styling | Tailwind CSS |
+ | Validation | Zod |
++| Authentication | NextAuth.js v4 Credentials provider, JWT sessions, Node scrypt password hashing |
+ | Testing | Vitest |
+ | Version control | Git & GitHub |
+ 
+@@ -94,6 +100,8 @@ One table (`tidewell-store` by default) with on-demand capacity and two global s
+ | Product | `PRODUCT#<id>` | `METADATA` | `CATEGORY#<slug>` / `<createdAt>` | `TYPE#PRODUCT` / `<createdAt>#<id>` |
+ | Category | `CATEGORY#<slug>` | `METADATA` | | `TYPE#CATEGORY` / `<name>` |
+ | User | `USER#<id>` | `PROFILE` | | |
++| Credentials | `USER#acct-<id>` | `CREDENTIALS` | | |
++| Email uniqueness | `AUTH_EMAIL#<sha256(normalized-email)>` | `LOOKUP` | | |
+ | Cart item | `USER#<id>` | `CART#<productId>` | | |
+ | Wishlist item | `USER#<id>` | `WISHLIST#<productId>` | | |
+ 
+@@ -132,6 +140,8 @@ Copy `.env.example` to `.env.local`:
+ | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Optional. Leave empty to use the default AWS credential chain (`aws configure`, SSO, IAM role) |
+ | `DYNAMODB_TABLE_NAME` | Table name, default `tidewell-store` |
+ | `DYNAMODB_ENDPOINT` | Optional. Set to `http://localhost:8000` to use DynamoDB Local |
++| `NEXTAUTH_URL` | App origin, e.g. `http://localhost:3000` for local development |
++| `NEXTAUTH_SECRET` | Random secret for encrypted sessions; generate with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"` |
+ 
+ `.env*` files are git-ignored. Never commit credentials.
+ 
+diff --git a/docs/AUTHENTICATION.md b/docs/AUTHENTICATION.md
+new file mode 100644
+index 0000000..ef701a8
+--- /dev/null
++++ b/docs/AUTHENTICATION.md
+@@ -0,0 +1,34 @@
++# Authenticated accounts (local development)
++
++## Workflow
++
++1. Visitors initially use the unsigned `tw_uid` httpOnly UUID cookie and the existing guest cart/wishlist.
++2. `POST /api/auth/register` validates the form, hashes the password using scrypt (random 16-byte salt), and atomically creates three DynamoDB items:
++   - `PK=USER#acct-<uuid>, SK=PROFILE` stores name, normalized email, timestamps.
++   - `PK=USER#acct-<uuid>, SK=CREDENTIALS` stores only the salted password hash.
++   - `PK=AUTH_EMAIL#<sha256(normalized-email)>, SK=LOOKUP` stores the account ID and prevents duplicate registrations, via a DynamoDB transactional conditional put.
++3. `POST /api/auth/callback/credentials` is owned by NextAuth.js, which checks the email lookup and hash and issues an encrypted JWT cookie. Users cannot self-assign an account ID through the request body or guest cookie.
++4. The server checks `getServerSession(authOptions)` on each personalized page and API route. Authenticated IDs start with `acct-`; guest UUID cookies are accepted only for guest data. No route should trust a client-supplied account ID.
++5. After successful sign-in, the client calls `POST /api/account/import-guest`. Account cart quantities win if a product exists in both carts; missing products are imported and wishlist entries are deduplicated. Imported guest entries are removed only after writes succeed. Out-of-stock guest items remain guest-only.
++6. `signOut()` removes the authenticated session cookie; the browser may still have the anonymous guest cookie.
++
++## Setup
++
++Install `next-auth@4.24.15` (a v4 release matching the existing Next.js 14 App Router). In `.env.local` set:
++
++```
++NEXTAUTH_URL=http://localhost:3000
++NEXTAUTH_SECRET=<use a random 32-byte-or-longer secret>
++```
++
++Generate the secret once with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.
++Keep it private. No new DynamoDB table or index is needed; the three new record types use the existing PK/SK structure. Do not re-seed to create an account.
++
++## Important limitations before public deployment
++
++- This is suitable for a **local demonstration**, not a public production authentication system without further work.
++- No email verification, forgotten-password flow, account deletion, session revocation, or multi-factor authentication.
++- Add distributed login/registration rate limiting, anti-abuse controls, and audit logs before opening registration publicly.
++- Guest cookies are legacy unsigned identifiers; account data is not accessible through them, but access to another guest's random cookie would allow guest data access. Sign guest cookies before production use.
++- The guest import operation is not a single database transaction. It is repeat-safe under normal sequential use but still needs concurrency testing.
++- Changing a registered email requires an atomic update of the email lookup and account record. It is disabled for now.
+diff --git a/src/app/account/page.tsx b/src/app/account/page.tsx
+index ca70641..769a2c4 100644
+--- a/src/app/account/page.tsx
++++ b/src/app/account/page.tsx
+@@ -1,21 +1,38 @@
+ import type { Metadata } from "next";
++import { getServerSession } from "next-auth";
++import AccountAuthForm from "@/components/AccountAuthForm";
++import ImportGuestButton from "@/components/ImportGuestButton";
+ import ProfileForm from "@/components/ProfileForm";
++import SignOutButton from "@/components/SignOutButton";
++import { authOptions } from "@/lib/auth";
+ import { userService } from "@/services/user";
+-import { getUserId } from "@/lib/session";
+ 
+ export const dynamic = "force-dynamic";
+ export const metadata: Metadata = { title: "Account" };
+ 
+-export default async function AccountPage() {
+-  const id = getUserId();
+-  const user = id ? await userService.get(id) : null;
++export default async function AccountPage({ searchParams }: { searchParams: { import?: string } }) {
++  const session = await getServerSession(authOptions);
++  const accountId = session?.user?.id;
++  const account = accountId?.startsWith("acct-") ? await userService.get(accountId) : null;
++
++  if (!account) {
++    return (
++      <div>
++        <h1 className="mb-2 text-4xl font-extrabold">Your account</h1>
++        <p className="mb-8 max-w-prose text-muted">Sign in to access your cart and wishlist from another browser. You can still browse and save items as a guest.</p>
++        <AccountAuthForm />
++      </div>
++    );
++  }
++
+   return (
+     <div>
+-      <h1 className="mb-2 text-4xl font-extrabold">Account</h1>
+-      <p className="mb-8 max-w-prose text-muted">
+-        You’re browsing as a guest. Your cart and wishlist are tied to this browser. Add your details so they’re saved with your profile.
+-      </p>
+-      <ProfileForm user={{ name: user?.name ?? "", email: user?.email ?? "" }} />
++      <h1 className="mb-2 text-4xl font-extrabold">Your account</h1>
++      <p className="mb-4 text-muted">Signed in as {account.email}. Your cart and wishlist are saved to this account.</p>
++      {searchParams.import === "failed" && <ImportGuestButton />}
++      <div className="mb-8"><SignOutButton /></div>
++      <h2 className="mb-4 text-xl font-semibold">Profile</h2>
++      <ProfileForm user={{ name: account.name, email: account.email }} emailReadOnly />
+     </div>
+   );
+ }
+diff --git a/src/app/api/account/import-guest/route.ts b/src/app/api/account/import-guest/route.ts
+new file mode 100644
+index 0000000..70baceb
+--- /dev/null
++++ b/src/app/api/account/import-guest/route.ts
+@@ -0,0 +1,18 @@
++import { getServerSession } from "next-auth";
++import { handle, ok } from "@/lib/api";
++import { authOptions } from "@/lib/auth";
++import { AppError } from "@/lib/errors";
++import { requireSameOrigin } from "@/lib/origin";
++import { getGuestUserId } from "@/lib/session";
++import { importGuestData } from "@/services/guestImport";
++
++export const dynamic = "force-dynamic";
++
++export const POST = handle(async (req: Request) => {
++  requireSameOrigin(req);
++  const session = await getServerSession(authOptions);
++  const accountId = session?.user?.id;
++  if (!accountId?.startsWith("acct-")) throw new AppError("Sign in to continue.", 401, "UNAUTHORIZED");
++  const guestId = getGuestUserId();
++  return ok(guestId ? await importGuestData(guestId, accountId) : { cartItems: 0, wishlistItems: 0 });
++});
+diff --git a/src/app/api/auth/[...nextauth]/route.ts b/src/app/api/auth/[...nextauth]/route.ts
+new file mode 100644
+index 0000000..9cd7923
+--- /dev/null
++++ b/src/app/api/auth/[...nextauth]/route.ts
+@@ -0,0 +1,5 @@
++import NextAuth from "next-auth";
++import { authOptions } from "@/lib/auth";
++
++const handler = NextAuth(authOptions);
++export { handler as GET, handler as POST };
+diff --git a/src/app/api/auth/register/route.ts b/src/app/api/auth/register/route.ts
+new file mode 100644
+index 0000000..3a6f322
+--- /dev/null
++++ b/src/app/api/auth/register/route.ts
+@@ -0,0 +1,9 @@
++import { handle, ok, readJson } from "@/lib/api";
++import { requireSameOrigin } from "@/lib/origin";
++import { authService } from "@/services/auth";
++
++export const POST = handle(async (req: Request) => {
++  requireSameOrigin(req);
++  const user = await authService.register(await readJson(req));
++  return ok({ id: user.id, name: user.name, email: user.email }, 201);
++});
+diff --git a/src/app/api/cart/[productId]/route.ts b/src/app/api/cart/[productId]/route.ts
+index 668429c..0a42400 100644
+--- a/src/app/api/cart/[productId]/route.ts
++++ b/src/app/api/cart/[productId]/route.ts
+@@ -1,6 +1,7 @@
++import { requireSameOrigin } from "@/lib/origin";
+ import { cartService } from "@/services/cart";
+ import { handle, ok, readJson } from "@/lib/api";
+-import { getOrCreateUserId } from "@/lib/session";
++import { getOrCreateViewerUserId } from "@/lib/session";
+ import { productIdSchema, updateCartSchema } from "@/lib/validation";
+ 
+ export const dynamic = "force-dynamic";
+@@ -8,12 +9,14 @@ export const dynamic = "force-dynamic";
+ type Ctx = { params: { productId: string } };
+ 
+ export const PATCH = handle(async (req: Request, { params }: Ctx) => {
++  requireSameOrigin(req);
+   const productId = productIdSchema.parse(params.productId);
+   const { quantity } = updateCartSchema.parse(await readJson(req));
+-  return ok(await cartService.setQuantity(getOrCreateUserId(), productId, quantity));
++  return ok(await cartService.setQuantity(await getOrCreateViewerUserId(), productId, quantity));
+ });
+ 
+-export const DELETE = handle(async (_req: Request, { params }: Ctx) => {
++export const DELETE = handle(async (req: Request, { params }: Ctx) => {
++  requireSameOrigin(req);
+   const productId = productIdSchema.parse(params.productId);
+-  return ok(await cartService.remove(getOrCreateUserId(), productId));
++  return ok(await cartService.remove(await getOrCreateViewerUserId(), productId));
+ });
+diff --git a/src/app/api/cart/route.ts b/src/app/api/cart/route.ts
+index 5d6b7fd..d409d19 100644
+--- a/src/app/api/cart/route.ts
++++ b/src/app/api/cart/route.ts
+@@ -1,6 +1,7 @@
++import { requireSameOrigin } from "@/lib/origin";
+ import { cartService } from "@/services/cart";
+ import { handle, ok, readJson } from "@/lib/api";
+-import { getOrCreateUserId, getUserId } from "@/lib/session";
++import { getOrCreateViewerUserId, getViewerUserId } from "@/lib/session";
+ import { addToCartSchema } from "@/lib/validation";
+ 
+ export const dynamic = "force-dynamic";
+@@ -8,11 +9,12 @@ export const dynamic = "force-dynamic";
+ const empty = { lines: [], itemCount: 0, subtotalCents: 0 };
+ 
+ export const GET = handle(async () => {
+-  const userId = getUserId();
++  const userId = await getViewerUserId();
+   return ok(userId ? await cartService.get(userId) : empty);
+ });
+ 
+ export const POST = handle(async (req: Request) => {
++  requireSameOrigin(req);
+   const { productId, quantity } = addToCartSchema.parse(await readJson(req));
+-  return ok(await cartService.add(getOrCreateUserId(), productId, quantity), 201);
++  return ok(await cartService.add(await getOrCreateViewerUserId(), productId, quantity), 201);
+ });
+diff --git a/src/app/api/user/route.ts b/src/app/api/user/route.ts
+index 9087b92..94b4df7 100644
+--- a/src/app/api/user/route.ts
++++ b/src/app/api/user/route.ts
+@@ -1,14 +1,16 @@
++import { requireSameOrigin } from "@/lib/origin";
+ import { userService } from "@/services/user";
+ import { handle, ok, readJson } from "@/lib/api";
+-import { getOrCreateUserId, getUserId } from "@/lib/session";
++import { getOrCreateViewerUserId, getViewerUserId } from "@/lib/session";
+ 
+ export const dynamic = "force-dynamic";
+ 
+ export const GET = handle(async () => {
+-  const id = getUserId();
++  const id = await getViewerUserId();
+   return ok(id ? await userService.get(id) : null);
+ });
+ 
+ export const PUT = handle(async (req: Request) => {
+-  return ok(await userService.updateProfile(getOrCreateUserId(), await readJson(req)));
++  requireSameOrigin(req);
++  return ok(await userService.updateProfile(await getOrCreateViewerUserId(), await readJson(req)));
+ });
+diff --git a/src/app/api/wishlist/[productId]/route.ts b/src/app/api/wishlist/[productId]/route.ts
+index b68b615..e4ad3ef 100644
+--- a/src/app/api/wishlist/[productId]/route.ts
++++ b/src/app/api/wishlist/[productId]/route.ts
+@@ -1,12 +1,14 @@
++import { requireSameOrigin } from "@/lib/origin";
+ import { wishlistService } from "@/services/wishlist";
+ import { handle, ok } from "@/lib/api";
+-import { getOrCreateUserId } from "@/lib/session";
++import { getOrCreateViewerUserId } from "@/lib/session";
+ import { productIdSchema } from "@/lib/validation";
+ 
+ export const dynamic = "force-dynamic";
+ 
+-export const DELETE = handle(async (_req: Request, { params }: { params: { productId: string } }) => {
++export const DELETE = handle(async (req: Request, { params }: { params: { productId: string } }) => {
++  requireSameOrigin(req);
+   const productId = productIdSchema.parse(params.productId);
+-  await wishlistService.remove(getOrCreateUserId(), productId);
++  await wishlistService.remove(await getOrCreateViewerUserId(), productId);
+   return ok({ removed: true });
+ });
+diff --git a/src/app/api/wishlist/route.ts b/src/app/api/wishlist/route.ts
+index f26667c..5dcc852 100644
+--- a/src/app/api/wishlist/route.ts
++++ b/src/app/api/wishlist/route.ts
+@@ -1,17 +1,19 @@
++import { requireSameOrigin } from "@/lib/origin";
+ import { wishlistService } from "@/services/wishlist";
+ import { handle, ok, readJson } from "@/lib/api";
+-import { getOrCreateUserId, getUserId } from "@/lib/session";
++import { getOrCreateViewerUserId, getViewerUserId } from "@/lib/session";
+ import { wishlistSchema } from "@/lib/validation";
+ 
+ export const dynamic = "force-dynamic";
+ 
+ export const GET = handle(async () => {
+-  const userId = getUserId();
++  const userId = await getViewerUserId();
+   return ok(userId ? await wishlistService.getProducts(userId) : []);
+ });
+ 
+ export const POST = handle(async (req: Request) => {
++  requireSameOrigin(req);
+   const { productId } = wishlistSchema.parse(await readJson(req));
+-  const result = await wishlistService.add(getOrCreateUserId(), productId);
++  const result = await wishlistService.add(await getOrCreateViewerUserId(), productId);
+   return ok(result, result.added ? 201 : 200); // 200 = already present, nothing duplicated
+ });
+diff --git a/src/app/cart/page.tsx b/src/app/cart/page.tsx
+index 75c2c3b..9af56e1 100644
+--- a/src/app/cart/page.tsx
++++ b/src/app/cart/page.tsx
+@@ -1,14 +1,14 @@
+ import type { Metadata } from "next";
+ import CartList from "@/components/CartList";
+ import { cartService } from "@/services/cart";
+-import { getUserId } from "@/lib/session";
++import { getViewerUserId } from "@/lib/session";
+ import type { Cart } from "@/types";
+ 
+ export const dynamic = "force-dynamic";
+ export const metadata: Metadata = { title: "Cart" };
+ 
+ export default async function CartPage() {
+-  const userId = getUserId();
++  const userId = await getViewerUserId();
+   const cart: Cart = userId ? await cartService.get(userId) : { lines: [], itemCount: 0, subtotalCents: 0 };
+   return (
+     <div>
+diff --git a/src/app/wishlist/page.tsx b/src/app/wishlist/page.tsx
+index 94f152c..531a9cb 100644
+--- a/src/app/wishlist/page.tsx
++++ b/src/app/wishlist/page.tsx
+@@ -2,13 +2,13 @@ import type { Metadata } from "next";
+ import EmptyState from "@/components/EmptyState";
+ import ProductGrid from "@/components/ProductGrid";
+ import { wishlistService } from "@/services/wishlist";
+-import { getUserId } from "@/lib/session";
++import { getViewerUserId } from "@/lib/session";
+ 
+ export const dynamic = "force-dynamic";
+ export const metadata: Metadata = { title: "Wishlist" };
+ 
+ export default async function WishlistPage() {
+-  const userId = getUserId();
++  const userId = await getViewerUserId();
+   const products = userId ? await wishlistService.getProducts(userId) : [];
+   return (
+     <div>
+diff --git a/src/components/AccountAuthForm.tsx b/src/components/AccountAuthForm.tsx
+new file mode 100644
+index 0000000..d7c3131
+--- /dev/null
++++ b/src/components/AccountAuthForm.tsx
+@@ -0,0 +1,90 @@
++"use client";
++
++import { useState } from "react";
++import { useRouter } from "next/navigation";
++import { signIn } from "next-auth/react";
++import { api } from "@/lib/client";
++import { credentialsSchema, registrationSchema } from "@/lib/validation";
++
++type Mode = "login" | "register";
++
++export default function AccountAuthForm() {
++  const router = useRouter();
++  const [mode, setMode] = useState<Mode>("login");
++  const [values, setValues] = useState({ name: "", email: "", password: "" });
++  const [error, setError] = useState<string | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  async function submit(e: React.FormEvent<HTMLFormElement>) {
++    e.preventDefault();
++    setError(null);
++    const parsed = mode === "register"
++      ? registrationSchema.safeParse(values)
++      : credentialsSchema.safeParse({ email: values.email, password: values.password });
++    if (!parsed.success) {
++      setError(parsed.error.issues[0]?.message ?? "Check your details.");
++      return;
++    }
++    setBusy(true);
++    try {
++      if (mode === "register") {
++        await api("/api/auth/register", { method: "POST", body: JSON.stringify(parsed.data) });
++      }
++      const result = await signIn("credentials", {
++        redirect: false,
++        email: parsed.data.email,
++        password: parsed.data.password,
++      });
++      if (!result || result.error) {
++        if (mode === "register") {
++          setMode("login");
++          throw new Error("Account created, but automatic sign-in failed. Please sign in.");
++        }
++        throw new Error("Incorrect email or password.");
++      }
++
++      // Import guest-only items after the authenticated session cookie is issued.
++      // If import fails, the user stays signed in and can retry from the account page.
++      let importFailed = false;
++      try {
++        await api("/api/account/import-guest", { method: "POST" });
++      } catch {
++        importFailed = true;
++      }
++      router.push(importFailed ? "/account?import=failed" : "/account");
++      router.refresh();
++    } catch (e) {
++      setError((e as Error).message);
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  return (
++    <div className="max-w-md">
++      <div className="mb-6 flex gap-2" role="group" aria-label="Account actions">
++        <button type="button" aria-pressed={mode === "login"} onClick={() => { setMode("login"); setError(null); }} className={mode === "login" ? "btn-primary" : "btn-outline"}>Sign in</button>
++        <button type="button" aria-pressed={mode === "register"} onClick={() => { setMode("register"); setError(null); }} className={mode === "register" ? "btn-primary" : "btn-outline"}>Create account</button>
++      </div>
++      <form onSubmit={submit} noValidate className="space-y-5">
++        {mode === "register" && (
++          <div>
++            <label className="mb-1 block text-sm font-medium" htmlFor="register-name">Full name</label>
++            <input id="register-name" className="field" autoComplete="name" maxLength={80} value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} required />
++          </div>
++        )}
++        <div>
++          <label className="mb-1 block text-sm font-medium" htmlFor="auth-email">Email address</label>
++          <input id="auth-email" type="email" className="field" autoComplete="email" maxLength={120} value={values.email} onChange={(e) => setValues({ ...values, email: e.target.value })} required />
++        </div>
++        <div>
++          <label className="mb-1 block text-sm font-medium" htmlFor="auth-password">Password</label>
++          <input id="auth-password" type="password" className="field" autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 12 : undefined} value={values.password} onChange={(e) => setValues({ ...values, password: e.target.value })} required />
++          {mode === "register" && <p className="mt-1 text-xs text-muted">Use at least 12 characters.</p>}
++        </div>
++        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
++        <button type="submit" disabled={busy} className="btn-primary">{busy ? "Please wait…" : mode === "register" ? "Create account" : "Sign in"}</button>
++      </form>
++    </div>
++  );
++}
+diff --git a/src/components/Header.tsx b/src/components/Header.tsx
+index 125b8a2..be3d6bc 100644
+--- a/src/components/Header.tsx
++++ b/src/components/Header.tsx
+@@ -1,8 +1,10 @@
+ import Link from "next/link";
+ import { getViewerCartCount } from "@/services/viewer";
++import { getServerSession } from "next-auth";
++import { authOptions } from "@/lib/auth";
+ 
+ export default async function Header() {
+-  const count = await getViewerCartCount();
++  const [count, session] = await Promise.all([getViewerCartCount(), getServerSession(authOptions)]);
+   return (
+     <header className="sticky top-0 z-30 border-b border-ink/10 bg-mineral/95 backdrop-blur">
+       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 sm:px-6">
+@@ -19,7 +21,7 @@ export default async function Header() {
+         </form>
+         <div className="flex items-center gap-4 text-sm font-medium">
+           <Link href="/wishlist" className="hover:text-cobalt">Wishlist</Link>
+-          <Link href="/account" className="hover:text-cobalt">Account</Link>
++          <Link href="/account" className="hover:text-cobalt">{session?.user?.id ? "Account" : "Sign in"}</Link>
+           <Link href="/cart" className="btn-primary py-2" aria-label={`Cart, ${count} items`}>
+             Cart
+             <span className="rounded bg-white/20 px-1.5 text-xs tabular-nums">{count}</span>
+diff --git a/src/components/ImportGuestButton.tsx b/src/components/ImportGuestButton.tsx
+new file mode 100644
+index 0000000..d50adce
+--- /dev/null
++++ b/src/components/ImportGuestButton.tsx
+@@ -0,0 +1,33 @@
++"use client";
++
++import { useState } from "react";
++import { useRouter } from "next/navigation";
++import { api } from "@/lib/client";
++
++export default function ImportGuestButton() {
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const router = useRouter();
++
++  async function retry() {
++    setBusy(true);
++    setError(null);
++    try {
++      await api("/api/account/import-guest", { method: "POST" });
++      router.push("/account");
++      router.refresh();
++    } catch (e) {
++      setError((e as Error).message);
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  return (
++    <div className="my-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
++      <p>Your account is signed in, but importing the guest cart or wishlist did not finish. Your original guest items have been kept where possible.</p>
++      <button type="button" disabled={busy} onClick={retry} className="btn-outline mt-3">{busy ? "Retrying…" : "Retry import"}</button>
++      {error && <p role="alert" className="mt-2 text-red-700">{error}</p>}
++    </div>
++  );
++}
+diff --git a/src/components/ProfileForm.tsx b/src/components/ProfileForm.tsx
+index a950046..2300f5a 100644
+--- a/src/components/ProfileForm.tsx
++++ b/src/components/ProfileForm.tsx
+@@ -5,7 +5,7 @@ import { api } from "@/lib/client";
+ import { profileSchema } from "@/lib/validation";
+ import type { User } from "@/types";
+ 
+-export default function ProfileForm({ user }: { user: Pick<User, "name" | "email"> }) {
++export default function ProfileForm({ user, emailReadOnly = false }: { user: Pick<User, "name" | "email">; emailReadOnly?: boolean }) {
+   const [values, setValues] = useState({ name: user.name, email: user.email });
+   const [errors, setErrors] = useState<{ name?: string; email?: string; form?: string }>({});
+   const [saved, setSaved] = useState(false);
+@@ -46,9 +46,10 @@ export default function ProfileForm({ user }: { user: Pick<User, "name" | "email
+       </div>
+       <div>
+         <label htmlFor="email" className="mb-1 block text-sm font-medium">Email</label>
+-        <input id="email" type="email" className="field" value={values.email} onChange={(e) => setValues({ ...values, email: e.target.value })} aria-invalid={!!errors.email} aria-describedby={errors.email ? "email-err" : undefined} autoComplete="email" />
++        <input id="email" type="email" className="field" value={values.email} readOnly={emailReadOnly} onChange={(e) => setValues({ ...values, email: e.target.value })} aria-invalid={!!errors.email} aria-describedby={errors.email ? "email-err" : undefined} autoComplete="email" />
+         {errors.email && <p id="email-err" className="mt-1 text-sm text-red-700">{errors.email}</p>}
+       </div>
++      {emailReadOnly && <p className="-mt-3 text-xs text-muted">Email changes are not supported yet.</p>}
+       {errors.form && <p role="alert" className="text-sm text-red-700">{errors.form}</p>}
+       {saved && <p role="status" className="text-sm text-green-800">Profile saved.</p>}
+       <button type="submit" disabled={saving} className="btn-primary">{saving ? "Saving…" : "Save profile"}</button>
+diff --git a/src/components/SignOutButton.tsx b/src/components/SignOutButton.tsx
+new file mode 100644
+index 0000000..c938aa2
+--- /dev/null
++++ b/src/components/SignOutButton.tsx
+@@ -0,0 +1,11 @@
++"use client";
++
++import { signOut } from "next-auth/react";
++
++export default function SignOutButton() {
++  return (
++    <button className="btn-outline" type="button" onClick={() => signOut({ callbackUrl: "/account" })}>
++      Sign out
++    </button>
++  );
++}
+diff --git a/src/db/keys.ts b/src/db/keys.ts
+index 434179f..33beefb 100644
+--- a/src/db/keys.ts
++++ b/src/db/keys.ts
+@@ -12,6 +12,7 @@ export const keys = {
+   product: (id: string) => ({ PK: `PRODUCT#${id}`, SK: "METADATA" }),
+   category: (slug: string) => ({ PK: `CATEGORY#${slug}`, SK: "METADATA" }),
+   user: (id: string) => ({ PK: `USER#${id}`, SK: "PROFILE" }),
++  userCredentials: (id: string) => ({ PK: `USER#${id}`, SK: "CREDENTIALS" }),
+   cartItem: (userId: string, productId: string) => ({ PK: `USER#${userId}`, SK: `CART#${productId}` }),
+   wishlistItem: (userId: string, productId: string) => ({ PK: `USER#${userId}`, SK: `WISHLIST#${productId}` }),
+ };
+diff --git a/src/db/repositories/auth.ts b/src/db/repositories/auth.ts
+new file mode 100644
+index 0000000..5ae8114
+--- /dev/null
++++ b/src/db/repositories/auth.ts
+@@ -0,0 +1,79 @@
++import { createHash } from "node:crypto";
++import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
++import { ddb, TABLE } from "../client";
++import { dbCall } from "../errors";
++import { keys } from "../keys";
++import { ConflictError } from "@/lib/errors";
++import type { User } from "@/types";
++
++// The email lookup is an independent item so uniqueness can be enforced atomically.
++// Hashing the normalized email keeps it out of DynamoDB partition key names.
++function emailKey(email: string) {
++  return { PK: `AUTH_EMAIL#${createHash("sha256").update(email).digest("hex")}`, SK: "LOOKUP" };
++}
++
++export const authRepo = {
++  async create(user: User, passwordHash: string): Promise<void> {
++    try {
++      await ddb.send(new TransactWriteCommand({
++        TransactItems: [
++          {
++            Put: {
++              TableName: TABLE,
++              Item: { ...keys.user(user.id), entityType: "USER", accountType: "registered", ...user },
++              ConditionExpression: "attribute_not_exists(PK)",
++            },
++          },
++          {
++            Put: {
++              TableName: TABLE,
++              Item: { ...keys.userCredentials(user.id), entityType: "CREDENTIALS", passwordHash },
++              ConditionExpression: "attribute_not_exists(PK)",
++            },
++          },
++          {
++            Put: {
++              TableName: TABLE,
++              Item: { ...emailKey(user.email), entityType: "AUTH_EMAIL", userId: user.id },
++              ConditionExpression: "attribute_not_exists(PK)",
++            },
++          },
++        ],
++      }));
++    } catch (error) {
++      const e = error as { name?: string; CancellationReasons?: { Code?: string }[] };
++      if (e.name === "TransactionCanceledException") {
++        // Some DynamoDB configurations omit cancellation reasons. Check whether
++        // the unique email lookup now exists before reporting a generic failure.
++        if (e.CancellationReasons?.some((reason) => reason.Code === "ConditionalCheckFailed") ||
++            (await this.findByEmail(user.email))) {
++          throw new ConflictError("An account with this email already exists.");
++        }
++      }
++      return dbCall("auth.create", () => Promise.reject(error));
++    }
++  },
++
++  async findByEmail(email: string): Promise<{ user: User; passwordHash: string } | null> {
++    const lookup = await dbCall("auth.emailLookup", () =>
++      ddb.send(new GetCommand({ TableName: TABLE, Key: emailKey(email), ConsistentRead: true }))
++    );
++    const id = lookup.Item?.userId;
++    if (typeof id !== "string" || !/^acct-[0-9a-f-]{36}$/i.test(id)) return null;
++
++    const [profile, credentials] = await Promise.all([
++      dbCall("auth.profile", () => ddb.send(new GetCommand({ TableName: TABLE, Key: keys.user(id), ConsistentRead: true }))),
++      dbCall("auth.credentials", () => ddb.send(new GetCommand({ TableName: TABLE, Key: keys.userCredentials(id), ConsistentRead: true }))),
++    ]);
++    if (!profile.Item || !credentials.Item || typeof credentials.Item.passwordHash !== "string") return null;
++    if (profile.Item.email !== email) return null;
++    const user: User = {
++      id,
++      name: String(profile.Item.name ?? ""),
++      email,
++      createdAt: String(profile.Item.createdAt ?? ""),
++      updatedAt: String(profile.Item.updatedAt ?? ""),
++    };
++    return { user, passwordHash: credentials.Item.passwordHash };
++  },
++};
+diff --git a/src/lib/auth.ts b/src/lib/auth.ts
+new file mode 100644
+index 0000000..f861922
+--- /dev/null
++++ b/src/lib/auth.ts
+@@ -0,0 +1,32 @@
++import type { NextAuthOptions } from "next-auth";
++import CredentialsProvider from "next-auth/providers/credentials";
++import { authService } from "@/services/auth";
++
++export const authOptions: NextAuthOptions = {
++  secret: process.env.NEXTAUTH_SECRET,
++  session: { strategy: "jwt", maxAge: 7 * 24 * 60 * 60 },
++  pages: { signIn: "/account" },
++  providers: [
++    CredentialsProvider({
++      name: "Email and password",
++      credentials: {
++        email: { label: "Email", type: "email" },
++        password: { label: "Password", type: "password" },
++      },
++      async authorize(credentials) {
++        const user = await authService.authenticate(credentials);
++        return user ? { id: user.id, name: user.name, email: user.email } : null;
++      },
++    }),
++  ],
++  callbacks: {
++    async jwt({ token, user }) {
++      if (user) token.sub = user.id;
++      return token;
++    },
++    async session({ session, token }) {
++      if (session.user && typeof token.sub === "string") session.user.id = token.sub;
++      return session;
++    },
++  },
++};
+diff --git a/src/lib/origin.ts b/src/lib/origin.ts
+new file mode 100644
+index 0000000..6b1a654
+--- /dev/null
++++ b/src/lib/origin.ts
+@@ -0,0 +1,10 @@
++import { AppError } from "./errors";
++
++/** Reject cross-origin browser POSTs that rely on the user's cookies. */
++export function requireSameOrigin(req: Request): void {
++  const origin = req.headers.get("origin");
++  if (req.headers.get("sec-fetch-site") === "cross-site" ||
++      (origin && origin !== new URL(req.url).origin)) {
++    throw new AppError("Cross-origin request rejected.", 403, "INVALID_ORIGIN");
++  }
++}
+diff --git a/src/lib/password.ts b/src/lib/password.ts
+new file mode 100644
+index 0000000..7c1af73
+--- /dev/null
++++ b/src/lib/password.ts
+@@ -0,0 +1,31 @@
++import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
++
++// scrypt uses a random salt for every password. Never store plaintext passwords.
++const N = 1 << 15;
++const KEY_LENGTH = 64;
++const OPTIONS = { N, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
++
++function derive(password: string, salt: Buffer): Promise<Buffer> {
++  return new Promise((resolve, reject) => {
++    scrypt(password, salt, KEY_LENGTH, OPTIONS, (error, key) => {
++      if (error) reject(error);
++      else resolve(key);
++    });
++  });
++}
++
++export async function hashPassword(password: string): Promise<string> {
++  const salt = randomBytes(16);
++  const key = await derive(password, salt);
++  return `scrypt$${N}$${salt.toString("base64url")}$${key.toString("base64url")}`;
++}
++
++export async function verifyPassword(password: string, stored: string): Promise<boolean> {
++  const parts = stored.split("$");
++  if (parts.length !== 4 || parts[0] !== "scrypt" || parts[1] !== String(N)) return false;
++  const salt = Buffer.from(parts[2], "base64url");
++  const expected = Buffer.from(parts[3], "base64url");
++  if (salt.length !== 16 || expected.length !== KEY_LENGTH) return false;
++  const actual = await derive(password, salt);
++  return timingSafeEqual(actual, expected);
++}
+diff --git a/src/lib/session.ts b/src/lib/session.ts
+index 942fbe9..7b1a5cb 100644
+--- a/src/lib/session.ts
++++ b/src/lib/session.ts
+@@ -1,18 +1,22 @@
+ import { cookies } from "next/headers";
+-import { randomUUID } from "crypto";
++import { randomUUID } from "node:crypto";
++import { getServerSession } from "next-auth";
++import { authOptions } from "./auth";
+ 
+ const COOKIE = "tw_uid";
+ const ONE_YEAR = 60 * 60 * 24 * 365;
++const GUEST_ID = /^[0-9a-f-]{36}$/i;
++const ACCOUNT_ID = /^acct-[0-9a-f-]{36}$/i;
+ 
+-/** Returns the current visitor id or null (does not create anything). */
+-export function getUserId(): string | null {
++/** Guest cookies contain UUIDs only; authenticated accounts use a separate namespace. */
++export function getGuestUserId(): string | null {
+   const value = cookies().get(COOKIE)?.value;
+-  return value && /^[0-9a-f-]{36}$/i.test(value) ? value : null;
++  return value && GUEST_ID.test(value) ? value : null;
+ }
+ 
+-/** Returns the visitor id, issuing a new httpOnly cookie when needed. Route handlers only. */
+-export function getOrCreateUserId(): string {
+-  const existing = getUserId();
++/** Only call in a Route Handler where cookies can be written. */
++export function getOrCreateGuestUserId(): string {
++  const existing = getGuestUserId();
+   if (existing) return existing;
+   const id = randomUUID();
+   cookies().set(COOKIE, id, {
+@@ -24,3 +28,19 @@ export function getOrCreateUserId(): string {
+   });
+   return id;
+ }
++
++/** Authenticated sessions always take priority over the anonymous visitor cookie. */
++async function getAccountId(): Promise<string | null> {
++  const session = await getServerSession(authOptions);
++  const id = session?.user?.id;
++  return id && ACCOUNT_ID.test(id) ? id : null;
++}
++
++export async function getViewerUserId(): Promise<string | null> {
++  return (await getAccountId()) ?? getGuestUserId();
++}
++
++/** Route Handlers only. Never use an unsigned guest cookie as an account identity. */
++export async function getOrCreateViewerUserId(): Promise<string> {
++  return (await getAccountId()) ?? getOrCreateGuestUserId();
++}
+diff --git a/src/lib/validation.ts b/src/lib/validation.ts
+index 4212399..0a59c76 100644
+--- a/src/lib/validation.ts
++++ b/src/lib/validation.ts
+@@ -20,6 +20,15 @@ export const profileSchema = z.object({
+   email: z.string().trim().toLowerCase().email("Enter a valid email address").max(120),
+ });
+ 
++export const credentialsSchema = z.object({
++  email: profileSchema.shape.email,
++  password: z.string().min(1).max(128),
++});
++
++export const registrationSchema = profileSchema.extend({
++  password: z.string().min(12, "Password must be at least 12 characters").max(128),
++});
++
+ const sortValues = ["newest", "price-asc", "price-desc", "rating"] as const;
+ 
+ export const productQuerySchema = z.object({
+diff --git a/src/services/auth.ts b/src/services/auth.ts
+new file mode 100644
+index 0000000..3cbdb63
+--- /dev/null
++++ b/src/services/auth.ts
+@@ -0,0 +1,25 @@
++import { randomUUID } from "node:crypto";
++import { authRepo } from "@/db/repositories/auth";
++import { hashPassword, verifyPassword } from "@/lib/password";
++import { credentialsSchema, registrationSchema } from "@/lib/validation";
++import type { User } from "@/types";
++
++export const authService = {
++  async register(input: unknown): Promise<User> {
++    const data = registrationSchema.parse(input);
++    const now = new Date().toISOString();
++    // An account ID can never be mistaken for an unsigned guest UUID cookie.
++    const user: User = { id: `acct-${randomUUID()}`, name: data.name, email: data.email, createdAt: now, updatedAt: now };
++    const passwordHash = await hashPassword(data.password);
++    await authRepo.create(user, passwordHash);
++    return user;
++  },
++
++  async authenticate(input: unknown): Promise<User | null> {
++    const parsed = credentialsSchema.safeParse(input);
++    if (!parsed.success) return null;
++    const account = await authRepo.findByEmail(parsed.data.email);
++    if (!account || !(await verifyPassword(parsed.data.password, account.passwordHash))) return null;
++    return account.user;
++  },
++};
+diff --git a/src/services/guestImport.ts b/src/services/guestImport.ts
+new file mode 100644
+index 0000000..86956fb
+--- /dev/null
++++ b/src/services/guestImport.ts
+@@ -0,0 +1,37 @@
++import { cartRepo } from "@/db/repositories/cart";
++import { productRepo } from "@/db/repositories/products";
++import { wishlistRepo } from "@/db/repositories/wishlist";
++import { clampQuantity } from "./cartLogic";
++
++/**
++ * Idempotent import: saved account cart quantities take precedence when a product
++ * occurs in both carts. Guest-only products and wishlist entries are moved.
++ * Remove a guest item only after the destination write succeeds.
++ */
++export async function importGuestData(guestId: string, accountId: string) {
++  if (guestId === accountId) return { cartItems: 0, wishlistItems: 0 };
++  const [cartItems, wishlistItems] = await Promise.all([
++    cartRepo.list(guestId),
++    wishlistRepo.list(guestId),
++  ]);
++  let cartMoved = 0;
++  let wishlistMoved = 0;
++
++  for (const item of cartItems) {
++    const product = await productRepo.getById(item.productId);
++    if (!product || product.stock <= 0) continue; // Keep unavailable items in guest cart.
++    const current = await cartRepo.get(accountId, item.productId);
++    if (!current) {
++      await cartRepo.upsert({ ...item, userId: accountId, quantity: clampQuantity(item.quantity, product.stock) });
++      cartMoved += 1;
++    }
++    await cartRepo.remove(guestId, item.productId);
++  }
++
++  for (const item of wishlistItems) {
++    if (!(await productRepo.getById(item.productId))) continue;
++    if (await wishlistRepo.add(accountId, item.productId)) wishlistMoved += 1;
++    await wishlistRepo.remove(guestId, item.productId);
++  }
++  return { cartItems: cartMoved, wishlistItems: wishlistMoved };
++}
+diff --git a/src/services/user.ts b/src/services/user.ts
+index f76d76a..8949592 100644
+--- a/src/services/user.ts
++++ b/src/services/user.ts
+@@ -1,5 +1,6 @@
+ import { userRepo } from "@/db/repositories/users";
+ import { profileSchema } from "@/lib/validation";
++import { ConflictError, NotFoundError } from "@/lib/errors";
+ import type { User } from "@/types";
+ 
+ export const userService = {
+@@ -7,7 +8,15 @@ export const userService = {
+ 
+   async updateProfile(id: string, input: unknown): Promise<User> {
+     const data = profileSchema.parse(input);
+-    await userRepo.ensure(id);
++    if (id.startsWith("acct-")) {
++      const existing = await userRepo.get(id);
++      if (!existing) throw new NotFoundError("Account not found");
++      // Email is the login identifier; changing it requires a separate atomic
++      // email-lookup migration and re-verification, not a generic profile PUT.
++      if (data.email !== existing.email) throw new ConflictError("Account email cannot be changed here.");
++    } else {
++      await userRepo.ensure(id);
++    }
+     return userRepo.updateProfile(id, data);
+   },
+ };
+diff --git a/src/services/viewer.ts b/src/services/viewer.ts
+index c18b504..0c49148 100644
+--- a/src/services/viewer.ts
++++ b/src/services/viewer.ts
+@@ -1,16 +1,16 @@
+-import { getUserId } from "@/lib/session";
++import { getViewerUserId } from "@/lib/session";
+ import { cartService } from "./cart";
+ import { wishlistService } from "./wishlist";
+ 
+ /** Non-critical, per-visitor data for the page chrome. Failures degrade gracefully instead of breaking the page. */
+ export async function getViewerCartCount(): Promise<number> {
+-  const id = getUserId();
++  const id = await getViewerUserId();
+   if (!id) return 0;
+   try { return await cartService.count(id); } catch { return 0; }
+ }
+ 
+ export async function getViewerWishlistIds(): Promise<Set<string>> {
+-  const id = getUserId();
++  const id = await getViewerUserId();
+   if (!id) return new Set();
+   try { return new Set(await wishlistService.getIds(id)); } catch { return new Set(); }
+ }
+diff --git a/src/types/next-auth.d.ts b/src/types/next-auth.d.ts
+new file mode 100644
+index 0000000..31df682
+--- /dev/null
++++ b/src/types/next-auth.d.ts
+@@ -0,0 +1,7 @@
++import type { DefaultSession } from "next-auth";
++
++declare module "next-auth" {
++  interface Session {
++    user: { id: string } & DefaultSession["user"];
++  }
++}
+diff --git a/tests/auth.test.ts b/tests/auth.test.ts
+new file mode 100644
+index 0000000..a0b4bbc
+--- /dev/null
++++ b/tests/auth.test.ts
+@@ -0,0 +1,24 @@
++import { describe, expect, it } from "vitest";
++import { hashPassword, verifyPassword } from "@/lib/password";
++import { credentialsSchema, registrationSchema } from "@/lib/validation";
++
++describe("registration and passwords", () => {
++  it("normalizes emails and rejects weak or malformed registration", () => {
++    const data = registrationSchema.parse({ name: " Ana ", email: " ANA@Example.COM ", password: "long sample passphrase" });
++    expect(data.email).toBe("ana@example.com");
++    expect(data.name).toBe("Ana");
++    expect(() => registrationSchema.parse({ name: "A", email: "wrong", password: "short" })).toThrow();
++    expect(() => registrationSchema.parse({ name: "Ana", email: "ana@example.com", password: "short" })).toThrow();
++    expect(credentialsSchema.parse({ email: "  ANA@EXAMPLE.COM  ", password: "x" }).email).toBe("ana@example.com");
++  });
++
++  it("hashes with a unique salt and verifies passwords without storing plaintext", async () => {
++    const one = await hashPassword("a sufficiently long password");
++    const two = await hashPassword("a sufficiently long password");
++    expect(one).not.toBe(two);
++    expect(one).not.toContain("a sufficiently long password");
++    expect(await verifyPassword("a sufficiently long password", one)).toBe(true);
++    expect(await verifyPassword("wrong password", one)).toBe(false);
++    expect(await verifyPassword("a sufficiently long password", "not-a-password-hash")).toBe(false);
++  });
++});
