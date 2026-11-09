@@ -15,6 +15,7 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React, 
 - Subtotal and item count computed on the server in integer cents
 - Adding the same product twice merges into one line (no duplicates)
 - Quantity capped by stock and a per-item maximum (10)
+- Concurrent cart edits use versioned conditional DynamoDB writes and bounded retries (no lost updates)
 - Live cart count in the header
 
 **Wishlist**
@@ -102,7 +103,7 @@ One table (`tidewell-store` by default) with on-demand capacity and two global s
 | User | `USER#<id>` | `PROFILE` | | |
 | Credentials | `USER#acct-<id>` | `CREDENTIALS` | | |
 | Email uniqueness | `AUTH_EMAIL#<sha256(normalized-email)>` | `LOOKUP` | | |
-| Cart item | `USER#<id>` | `CART#<productId>` | | |
+| Cart item (`quantity`, optional legacy `version`) | `USER#<id>` | `CART#<productId>` | | |
 | Wishlist item | `USER#<id>` | `WISHLIST#<productId>` | | |
 
 ### Access patterns and CRUD
@@ -118,9 +119,9 @@ One table (`tidewell-store` by default) with on-demand capacity and two global s
 | Create or update product / category | `PutItem` (seed script) |
 | Create user | `PutItem` with `attribute_not_exists(PK)` (idempotent) |
 | Update profile | `UpdateItem` with `attribute_exists(PK)` condition |
-| Read cart | `Query` PK=`USER#id`, `begins_with(SK, "CART#")` |
-| Add to cart | `GetItem` existing line, merge quantity, `PutItem` |
-| Update quantity | `GetItem` + `PutItem` (clamped to stock) |
+| Read cart | Strongly consistent `Query` PK=`USER#id`, `begins_with(SK, "CART#")` |
+| Add to cart | Strongly consistent `GetItem`, merge quantity, conditional version-checked `PutItem` (retry on conflict) |
+| Update quantity | Strongly consistent `GetItem` + conditional version-checked `PutItem` (clamped to stock) |
 | Remove from cart | `DeleteItem` (idempotent) |
 | Read wishlist | `Query` PK=`USER#id`, `begins_with(SK, "WISHLIST#")` |
 | Add to wishlist | `PutItem` with `attribute_not_exists(PK)`; condition failure means "already saved" |
@@ -128,7 +129,7 @@ One table (`tidewell-store` by default) with on-demand capacity and two global s
 
 > **Note on search:** DynamoDB has no full-text search. For a catalogue of this size the service filters in memory after a key-based query. For a large catalogue, move text search to OpenSearch/Algolia and keep DynamoDB as the source of truth.
 
-Prices are stored as integer cents. Cart lines store only `productId` and `quantity`; price and name come from the product record at read time, so the cart always reflects the current price.
+Prices are stored as integer cents. Cart records store the product ID, quantity, creation time, and (on updated rows) a version number; price and name come from the product record at read time, so cart totals use the latest product data retrieved.
 
 ## Environment variables
 
@@ -224,7 +225,7 @@ Status codes: `400` validation, `404` not found, `409` out of stock, `503` datab
 
 ## Testing
 
-`npm test` runs Vitest unit tests for the pure business rules (quantity clamping, merging, subtotal, search/sort) and Zod schemas. Manual test checklist:
+`npm test` runs Vitest tests for the business rules, validation, account password handling, and concurrent cart-service updates. `npm run db:test-cart` performs additional write-conflict tests against **DynamoDB Local** using temporary records (no existing user data is modified). See [Cart consistency](docs/CART_CONSISTENCY.md). Manual test checklist:
 1. Add the same product twice: one cart line, quantity 2.
 2. Try to exceed stock: quantity stops at the stock limit.
 3. Heart a product twice: only one wishlist record.
@@ -241,10 +242,10 @@ Status codes: `400` validation, `404` not found, `409` out of stock, `503` datab
 
 ## Known limitations and next steps
 
-- Guests are identified by cookie only; add real authentication (NextAuth/Cognito) and merge guest data on sign-in.
+- Registered users authenticate through NextAuth.js; guest browsing still uses unsigned cookies. Email verification, password recovery, and public-release anti-abuse protections remain future work.
 - Checkout and payments are out of scope.
 - Search is in-memory; use a search service for large catalogues.
-- Cart updates are read-then-write; for very high concurrency use `UpdateItem` with `ADD` and a condition on stock.
+- Cart lines use versioned conditional writes to prevent lost updates, but stock is not reserved and there is no transactional checkout. Extremely high contention can return HTTP 409 after bounded retries.
 
 ## Screenshots
 

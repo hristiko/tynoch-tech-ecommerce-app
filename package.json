@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:create": "tsx scripts/create-table.ts",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "db:test-cart": "tsx scripts/check-cart-consistency.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.600.0",

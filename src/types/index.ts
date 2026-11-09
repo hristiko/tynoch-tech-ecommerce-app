@@ -32,6 +32,8 @@ export interface CartItemRecord {
   productId: string;
   quantity: number;
   addedAt: string;
+  /** Optimistic-lock version. Legacy cart records may not have this field yet. */
+  version?: number;
 }
 
 export interface CartLine {

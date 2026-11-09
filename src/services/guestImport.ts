@@ -20,12 +20,15 @@ export async function importGuestData(guestId: string, accountId: string) {
   for (const item of cartItems) {
     const product = await productRepo.getById(item.productId);
     if (!product || product.stock <= 0) continue; // Keep unavailable items in guest cart.
-    const current = await cartRepo.get(accountId, item.productId);
-    if (!current) {
-      await cartRepo.upsert({ ...item, userId: accountId, quantity: clampQuantity(item.quantity, product.stock) });
-      cartMoved += 1;
-    }
-    await cartRepo.remove(guestId, item.productId);
+    // Insert only when missing: never replace a cart item added by this account
+    // (including one created concurrently from a different browser).
+    const inserted = await cartRepo.compareAndPut(
+      { ...item, userId: accountId, quantity: clampQuantity(item.quantity, product.stock) },
+      null
+    );
+    if (inserted) cartMoved += 1;
+    // Do not erase a guest item that was modified during the import.
+    await cartRepo.removeIfUnchanged(item);
   }
 
   for (const item of wishlistItems) {
