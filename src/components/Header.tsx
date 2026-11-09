@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { getViewerCartCount } from "@/services/viewer";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 export default async function Header() {
-  const count = await getViewerCartCount();
+  const [count, session] = await Promise.all([getViewerCartCount(), getServerSession(authOptions)]);
   return (
     <header className="sticky top-0 z-30 border-b border-ink/10 bg-mineral/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 sm:px-6">
@@ -19,7 +21,7 @@ export default async function Header() {
         </form>
         <div className="flex items-center gap-4 text-sm font-medium">
           <Link href="/wishlist" className="hover:text-cobalt">Wishlist</Link>
-          <Link href="/account" className="hover:text-cobalt">Account</Link>
+          <Link href="/account" className="hover:text-cobalt">{session?.user?.id ? "Account" : "Sign in"}</Link>
           <Link href="/cart" className="btn-primary py-2" aria-label={`Cart, ${count} items`}>
             Cart
             <span className="rounded bg-white/20 px-1.5 text-xs tabular-nums">{count}</span>

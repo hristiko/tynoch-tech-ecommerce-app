@@ -5,7 +5,7 @@ import { api } from "@/lib/client";
 import { profileSchema } from "@/lib/validation";
 import type { User } from "@/types";
 
-export default function ProfileForm({ user }: { user: Pick<User, "name" | "email"> }) {
+export default function ProfileForm({ user, emailReadOnly = false }: { user: Pick<User, "name" | "email">; emailReadOnly?: boolean }) {
   const [values, setValues] = useState({ name: user.name, email: user.email });
   const [errors, setErrors] = useState<{ name?: string; email?: string; form?: string }>({});
   const [saved, setSaved] = useState(false);
@@ -46,9 +46,10 @@ export default function ProfileForm({ user }: { user: Pick<User, "name" | "email
       </div>
       <div>
         <label htmlFor="email" className="mb-1 block text-sm font-medium">Email</label>
-        <input id="email" type="email" className="field" value={values.email} onChange={(e) => setValues({ ...values, email: e.target.value })} aria-invalid={!!errors.email} aria-describedby={errors.email ? "email-err" : undefined} autoComplete="email" />
+        <input id="email" type="email" className="field" value={values.email} readOnly={emailReadOnly} onChange={(e) => setValues({ ...values, email: e.target.value })} aria-invalid={!!errors.email} aria-describedby={errors.email ? "email-err" : undefined} autoComplete="email" />
         {errors.email && <p id="email-err" className="mt-1 text-sm text-red-700">{errors.email}</p>}
       </div>
+      {emailReadOnly && <p className="-mt-3 text-xs text-muted">Email changes are not supported yet.</p>}
       {errors.form && <p role="alert" className="text-sm text-red-700">{errors.form}</p>}
       {saved && <p role="status" className="text-sm text-green-800">Profile saved.</p>}
       <button type="submit" disabled={saving} className="btn-primary">{saving ? "Saving…" : "Save profile"}</button>

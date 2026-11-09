@@ -22,8 +22,13 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React, 
 - Duplicates are prevented at the database level with a conditional write
 
 **User data**
-- Anonymous visitors get a secure, httpOnly cookie id and a `User` record on first write
-- Profile form with the same Zod schema validating on the client and server
+- Anonymous visitors can shop using a browser cookie; account sessions take priority when signed in
+- Registration, password-based sign-in and sign-out using NextAuth.js (JWT sessions)
+- Account profiles, password hash records and unique email lookups in DynamoDB (atomic transaction)
+- Guest cart/wishlist items are imported into the account after successful sign-in; existing account quantities win on overlaps
+- Account email is read-only after registration; password reset and email verification are not implemented
+
+See [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations.
 
 **Engineering**
 - Layered code: UI → services → repositories → DynamoDB
@@ -40,6 +45,7 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React, 
 | Database | AWS DynamoDB (single-table design, on-demand billing) |
 | Styling | Tailwind CSS |
 | Validation | Zod |
+| Authentication | NextAuth.js v4 Credentials provider, JWT sessions, Node scrypt password hashing |
 | Testing | Vitest |
 | Version control | Git & GitHub |
 
@@ -94,6 +100,8 @@ One table (`tidewell-store` by default) with on-demand capacity and two global s
 | Product | `PRODUCT#<id>` | `METADATA` | `CATEGORY#<slug>` / `<createdAt>` | `TYPE#PRODUCT` / `<createdAt>#<id>` |
 | Category | `CATEGORY#<slug>` | `METADATA` | | `TYPE#CATEGORY` / `<name>` |
 | User | `USER#<id>` | `PROFILE` | | |
+| Credentials | `USER#acct-<id>` | `CREDENTIALS` | | |
+| Email uniqueness | `AUTH_EMAIL#<sha256(normalized-email)>` | `LOOKUP` | | |
 | Cart item | `USER#<id>` | `CART#<productId>` | | |
 | Wishlist item | `USER#<id>` | `WISHLIST#<productId>` | | |
 
@@ -132,6 +140,8 @@ Copy `.env.example` to `.env.local`:
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Optional. Leave empty to use the default AWS credential chain (`aws configure`, SSO, IAM role) |
 | `DYNAMODB_TABLE_NAME` | Table name, default `tidewell-store` |
 | `DYNAMODB_ENDPOINT` | Optional. Set to `http://localhost:8000` to use DynamoDB Local |
+| `NEXTAUTH_URL` | App origin, e.g. `http://localhost:3000` for local development |
+| `NEXTAUTH_SECRET` | Random secret for encrypted sessions; generate with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"` |
 
 `.env*` files are git-ignored. Never commit credentials.
 

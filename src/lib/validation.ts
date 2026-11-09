@@ -20,6 +20,15 @@ export const profileSchema = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address").max(120),
 });
 
+export const credentialsSchema = z.object({
+  email: profileSchema.shape.email,
+  password: z.string().min(1).max(128),
+});
+
+export const registrationSchema = profileSchema.extend({
+  password: z.string().min(12, "Password must be at least 12 characters").max(128),
+});
+
 const sortValues = ["newest", "price-asc", "price-desc", "rating"] as const;
 
 export const productQuerySchema = z.object({

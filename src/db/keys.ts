@@ -12,6 +12,7 @@ export const keys = {
   product: (id: string) => ({ PK: `PRODUCT#${id}`, SK: "METADATA" }),
   category: (slug: string) => ({ PK: `CATEGORY#${slug}`, SK: "METADATA" }),
   user: (id: string) => ({ PK: `USER#${id}`, SK: "PROFILE" }),
+  userCredentials: (id: string) => ({ PK: `USER#${id}`, SK: "CREDENTIALS" }),
   cartItem: (userId: string, productId: string) => ({ PK: `USER#${userId}`, SK: `CART#${productId}` }),
   wishlistItem: (userId: string, productId: string) => ({ PK: `USER#${userId}`, SK: `WISHLIST#${productId}` }),
 };

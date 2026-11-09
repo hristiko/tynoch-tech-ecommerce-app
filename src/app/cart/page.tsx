@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import CartList from "@/components/CartList";
 import { cartService } from "@/services/cart";
-import { getUserId } from "@/lib/session";
+import { getViewerUserId } from "@/lib/session";
 import type { Cart } from "@/types";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Cart" };
 
 export default async function CartPage() {
-  const userId = getUserId();
+  const userId = await getViewerUserId();
   const cart: Cart = userId ? await cartService.get(userId) : { lines: [], itemCount: 0, subtotalCents: 0 };
   return (
     <div>

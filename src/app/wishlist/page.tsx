@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import EmptyState from "@/components/EmptyState";
 import ProductGrid from "@/components/ProductGrid";
 import { wishlistService } from "@/services/wishlist";
-import { getUserId } from "@/lib/session";
+import { getViewerUserId } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Wishlist" };
 
 export default async function WishlistPage() {
-  const userId = getUserId();
+  const userId = await getViewerUserId();
   const products = userId ? await wishlistService.getProducts(userId) : [];
   return (
     <div>

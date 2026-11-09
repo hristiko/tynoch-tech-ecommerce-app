@@ -1,0 +1,25 @@
+import { randomUUID } from "node:crypto";
+import { authRepo } from "@/db/repositories/auth";
+import { hashPassword, verifyPassword } from "@/lib/password";
+import { credentialsSchema, registrationSchema } from "@/lib/validation";
+import type { User } from "@/types";
+
+export const authService = {
+  async register(input: unknown): Promise<User> {
+    const data = registrationSchema.parse(input);
+    const now = new Date().toISOString();
+    // An account ID can never be mistaken for an unsigned guest UUID cookie.
+    const user: User = { id: `acct-${randomUUID()}`, name: data.name, email: data.email, createdAt: now, updatedAt: now };
+    const passwordHash = await hashPassword(data.password);
+    await authRepo.create(user, passwordHash);
+    return user;
+  },
+
+  async authenticate(input: unknown): Promise<User | null> {
+    const parsed = credentialsSchema.safeParse(input);
+    if (!parsed.success) return null;
+    const account = await authRepo.findByEmail(parsed.data.email);
+    if (!account || !(await verifyPassword(parsed.data.password, account.passwordHash))) return null;
+    return account.user;
+  },
+};
