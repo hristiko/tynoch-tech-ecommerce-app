@@ -311,7 +311,3 @@ The first command checks the required files and records without modifying the da
 Tidewell demonstrates browsing and managing a small online catalogue with real server-side persistence. It does not process orders, charge customers, calculate final shipping costs, or reserve inventory at checkout. The checkout control is deliberately inactive.
 
 The project is intended to run locally for development and evaluation. Deploying it publicly would require an accessible database, secure production configuration, additional account-recovery controls, and operational monitoring.
-
-## Project submission
-
-The internship submission includes the [GitHub repository](https://github.com/hristiko/tynoch-tech-ecommerce-app), this README, technical documentation, and screenshots of the application. A live project URL can be provided if the application is deployed, but public deployment is not required by the assignment.
