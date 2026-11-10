@@ -1,7 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
-// A UUID is an identifier, not proof that the browser owns that identifier.
-// Signed cookies bind the identifier to a server-held secret.
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAC_BASE64URL = /^[A-Za-z0-9_-]{43}$/;
 const COOKIE_VERSION = "v1";
@@ -15,14 +13,12 @@ function mac(id: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(`tidewell:guest:${COOKIE_VERSION}:${id}`).digest();
 }
 
-/** Guest identity tokens contain a UUID plus an HMAC; no DynamoDB migration is needed. */
 export function signGuestId(id: string, secret: string): string {
   if (!UUID_V4.test(id)) throw new Error("Invalid guest ID");
   const canonical = id.toLowerCase();
   return `${COOKIE_VERSION}.${canonical}.${mac(canonical, secret).toString("base64url")}`;
 }
 
-/** Refuse unsigned (legacy), malformed, or modified guest identities. */
 export function verifyGuestCookie(cookie: string | undefined, secret: string): string | null {
   if (!cookie) return null;
   const parts = cookie.split(".");

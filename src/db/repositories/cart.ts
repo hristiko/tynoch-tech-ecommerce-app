@@ -12,7 +12,6 @@ const toRecord = (it: Record<string, unknown>): CartItemRecord => ({
   version: typeof it.version === "number" ? it.version : undefined,
 });
 
-/** Only an expected version may be replaced. Legacy rows have no version yet. */
 function expectedCondition(previous: CartItemRecord | null) {
   const names: Record<string, string> = { "#pk": "PK" };
   const values: Record<string, number> = {};
@@ -28,7 +27,6 @@ function expectedCondition(previous: CartItemRecord | null) {
       values,
     };
   }
-  // Upgrade existing cart records in place on their next successful write.
   names["#version"] = "version";
   names["#quantity"] = "quantity";
   values[":expectedQuantity"] = previous.quantity;
@@ -39,7 +37,6 @@ function expectedCondition(previous: CartItemRecord | null) {
   };
 }
 
-/** A contention conflict is normal; other database failures must still surface. */
 function conditionalWrite(operation: string, write: () => Promise<unknown>): Promise<boolean> {
   return dbCall(operation, async () => {
     try {
@@ -74,7 +71,6 @@ export const cartRepo = {
     return res.Item ? toRecord(res.Item) : null;
   },
 
-  /** Compare-and-set: a concurrent update returns false instead of overwriting data. */
   async compareAndPut(item: CartItemRecord, previous: CartItemRecord | null): Promise<boolean> {
     const condition = expectedCondition(previous);
     return conditionalWrite("cart.compareAndPut", () =>
@@ -93,7 +89,6 @@ export const cartRepo = {
     );
   },
 
-  /** Used by guest import so a new guest action cannot be silently deleted. */
   async removeIfUnchanged(item: CartItemRecord): Promise<boolean> {
     const condition = expectedCondition(item);
     return conditionalWrite("cart.removeIfUnchanged", () =>
@@ -107,7 +102,6 @@ export const cartRepo = {
     );
   },
 
-  /** Explicit removal is idempotent. The last completed user action may win. */
   async remove(userId: string, productId: string) {
     return dbCall("cart.remove", () =>
       ddb.send(new DeleteCommand({ TableName: TABLE, Key: keys.cartItem(userId, productId) }))

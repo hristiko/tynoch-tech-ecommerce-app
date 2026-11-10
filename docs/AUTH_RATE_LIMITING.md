@@ -1,45 +1,41 @@
-# Authentication request limits
+# Login and registration request limits
 
-This protects local demo registration and credentials sign-in against repeated requests. It uses conditional DynamoDB `UpdateItem` operations instead of in-memory counters, so concurrent requests from several Next.js workers share the limits.
+The application limits repeated sign-in and registration attempts so a single client cannot submit unlimited requests to the authentication endpoints. Counts are stored in DynamoDB rather than in a JavaScript variable, which lets concurrent Next.js requests share the same limits.
 
-## Limits
+## Current limits
 
-| Operation | Counter | Allowance | Window |
-| --- | --- | --- | --- |
-| Credentials sign-in | Normalized email address | 10 attempts | 15 minutes |
-| Credentials sign-in | Client identity | 60 attempts | 15 minutes |
-| Account registration | Normalized email address | 3 attempts | 60 minutes |
-| Account registration | Client identity | 10 attempts | 60 minutes |
+| Request | Counted by | Maximum | Period |
+| --- | --- | ---: | --- |
+| Sign-in | Email address | 10 attempts | 15 minutes |
+| Sign-in | Client | 60 attempts | 15 minutes |
+| Registration | Email address | 3 attempts | 60 minutes |
+| Registration | Client | 10 attempts | 60 minutes |
 
-All requests count, including successful requests, rather than tracking failed passwords only. Client and email counters are independent; either can block a request. Limits are fixed windows, so short bursts across a window boundary can exceed the nominal limit. A heavily targeted email account can also be temporarily blocked by someone else attempting its password. These are acceptable trade-offs for the current internship demonstration, not a complete bot-protection strategy for public deployment.
+Successful attempts count too. A request is blocked when **either** its email counter or client counter has reached the limit. The windows have fixed boundaries, so attempts near the end of one window and the start of another can produce a short burst. Someone repeatedly trying an email address can also temporarily block its legitimate owner.
 
-## Client identity and reverse proxies
+## How the counters work
 
-By default (`AUTH_TRUST_PROXY` unset or `false`), the client-specific counters use one shared key for **all** visitors. This is safe from spoofed `X-Forwarded-For` headers, but deliberately restrictive: after 10 registrations within one hour, all users must wait for the next window. It works well for a small local demo. Email quotas still apply independently.
+Each counter uses a key similar to `RATE#scope#sha256(identifier)` and `WINDOW#number`. An atomic conditional DynamoDB update increments the count only when it is below the limit. Records also contain `expiresAt` for eventual cleanup. Enforcement does **not** depend on DynamoDB deleting expired records: a new period has a different sort key.
 
-For a **public server behind a trusted reverse proxy that strips or overwrites incoming forwarding headers**, set `AUTH_TRUST_PROXY=true`. The limiter then uses the first validated IP in `X-Forwarded-For` (or `X-Real-IP`). **Never enable this with an untrusted forwarding chain:** a client could forge IP headers and bypass the per-client quota. This mode depends on correct proxy configuration; it does not independently authenticate the source IP.
+When using hosted DynamoDB, TTL cleanup may be enabled for the `expiresAt` attribute. Check the table's existing TTL configuration first. DynamoDB Local may retain expired counter records without affecting the limits.
 
-## DynamoDB records and TTL
+## Identifying the client
 
-The existing `PK`/`SK` table is reused. Keys have the shape `RATE#<scope>#<sha256(identifier)>` / `WINDOW#<window-number>`. No raw email address or IP appears in keys. Each record stores an `attempts` number and an `expiresAt` Unix timestamp. The conditional update increments at most to the limit, atomically rejecting later requests. A new window uses a new sort key, so **expiration of the limit never relies on TTL deletion**.
+For local development, leave `AUTH_TRUST_PROXY=false`. All visitors then share one client counter. That is restrictive, but it avoids trusting IP addresses that a requester could forge in forwarded headers.
 
-For storage cleanup on a hosted AWS DynamoDB table, enable TTL for the `expiresAt` attribute. For example, with an appropriately authenticated AWS CLI:
+For a public deployment, `AUTH_TRUST_PROXY=true` is suitable **only** when a trusted reverse proxy strips or overwrites incoming `X-Forwarded-For` and `X-Real-IP` headers. Without that protection, a requester could rotate fake IPs and bypass per-client limits.
 
-```sh
-aws dynamodb update-time-to-live --table-name tidewell-store --time-to-live-specification 'Enabled=true,AttributeName=expiresAt'
+## Testing
+
+With DynamoDB Local running, execute:
+
+```powershell
+npx tsx scripts/check-auth-rate-limit.ts
+npm test
 ```
 
-Check existing TTL configuration first if the table is shared with other apps. On DynamoDB Local, TTL cleanup may not be automatic; the limiter still enforces the correct windows, but expired counter records may remain stored.
+The integration script sends 12 concurrent attempts to a temporary counter limited to three. The expected result is three accepted, nine blocked, and a new attempt accepted in the next window. It removes the records it created.
 
-## Verification
+Registration can return HTTP `429` with `Retry-After`. NextAuth handles the login callback itself, so a blocked login is not guaranteed to return HTTP `429`; the UI handles the provider's error flow instead.
 
-1. Keep DynamoDB Local running and load `.env.local` as usual.
-2. Run `npx tsx scripts/check-auth-rate-limit.ts`: 12 simultaneous updates must result in exactly 3 successes, 9 `RateLimitError` failures; the next window must permit another request. The script deletes its temporary records.
-3. Run `npm run typecheck`, `npm test`, `npm run lint`, and `npm run build`.
-4. Manual check: repeatedly submit a wrong password for a test email. When the threshold is reached, sign-in attempts must stop succeeding; a normal successful login should work after the window rolls over. Registration must eventually return `429 RATE_LIMITED` with `Retry-After`. Avoid exercising limits against your primary account during testing.
-
-NextAuth v4's Credentials callback handles its own HTTP response. Login attempts are throttled inside `authorize()`, but **the HTTP status is not guaranteed to be 429**; the UI attempts to show a rate-limit message if NextAuth returns the `RATE_LIMITED` error. Registration uses the app's own route and returns 429 directly.
-
-## Remaining production concerns
-
-Request-rate limits alone do not make authentication production ready. The app still needs email verification, recovery, abuse monitoring, and validated reverse-proxy configuration. Generic credentials errors should not reveal whether an email account exists. Guest cookies are HMAC-signed; stolen valid cookies still require the usual session-theft protections.
+These limits are useful for this local project but don't replace email verification, monitoring or further anti-abuse controls needed for a public service.

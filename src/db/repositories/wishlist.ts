@@ -18,7 +18,6 @@ export const wishlistRepo = {
     return (res.Items ?? []).map((it) => ({ userId: it.userId, productId: it.productId, addedAt: it.addedAt }));
   },
 
-  /** Returns true if added, false if it was already on the wishlist (no duplicates). */
   async add(userId: string, productId: string): Promise<boolean> {
     try {
       await ddb.send(

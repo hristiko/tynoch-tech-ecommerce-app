@@ -6,7 +6,6 @@ export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ data }, { status });
 }
 
-/** Wrap a route handler so every error becomes a consistent JSON response. */
 export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response>) {
   return async (...args: A): Promise<Response> => {
     try {

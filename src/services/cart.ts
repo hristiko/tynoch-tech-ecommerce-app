@@ -58,7 +58,7 @@ export const cartService = {
   },
 
   async remove(userId: string, productId: string): Promise<Cart> {
-    await cartRepo.remove(userId, productId); // idempotent
+    await cartRepo.remove(userId, productId);
     return this.get(userId);
   },
 };

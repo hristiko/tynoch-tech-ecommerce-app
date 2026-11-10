@@ -11,7 +11,6 @@ export interface RateLimitRule {
   windowSeconds: number;
 }
 
-/** Fixed-window keys make limits independent of delayed DynamoDB TTL cleanup. */
 export function rateLimitWindow(rule: RateLimitRule, nowSeconds: number) {
   const window = Math.floor(nowSeconds / rule.windowSeconds);
   const windowEndsAt = (window + 1) * rule.windowSeconds;
@@ -20,7 +19,6 @@ export function rateLimitWindow(rule: RateLimitRule, nowSeconds: number) {
     Key: { PK: `RATE#${rule.scope}#${digest}`, SK: `WINDOW#${window}` },
     windowEndsAt,
     retryAfterSeconds: Math.max(1, windowEndsAt - nowSeconds),
-    // TTL is storage cleanup only; old windows never affect future requests.
     expiresAt: windowEndsAt + 48 * 60 * 60,
   };
 }

@@ -2,7 +2,6 @@ import { getViewerUserId } from "@/lib/session";
 import { cartService } from "./cart";
 import { wishlistService } from "./wishlist";
 
-/** Non-critical, per-visitor data for the page chrome. Failures degrade gracefully instead of breaking the page. */
 export async function getViewerCartCount(): Promise<number> {
   const id = await getViewerUserId();
   if (!id) return 0;

@@ -12,7 +12,6 @@ import { cartService } from "@/services/cart";
 import { importGuestData } from "@/services/guestImport";
 import type { Product } from "@/types";
 
-// Refuse to run the destructive test against a hosted AWS DynamoDB table.
 const localHosts = new Set(["localhost", "127.0.0.1", "host.docker.internal", "dynamodb", "tidewell-dynamodb"]);
 if (!env.endpoint || !localHosts.has(new URL(env.endpoint).hostname)) {
   throw new Error("This check must run against DynamoDB Local. Set DYNAMODB_ENDPOINT in .env.local.");
@@ -63,7 +62,6 @@ async function main() {
 
     console.log("All DynamoDB Local cart-consistency checks passed.");
   } finally {
-    // Test IDs are unique; clean up only the temporary records created above.
     for (const id of [userId, guestId, accountId]) {
       await cartRepo.remove(id, productId);
       await userRepo.delete(id);

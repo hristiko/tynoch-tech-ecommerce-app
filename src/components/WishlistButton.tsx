@@ -15,14 +15,14 @@ export default function WishlistButton({ productId, initial, variant = "icon", c
 
   async function toggle() {
     const next = !saved;
-    setSaved(next); // optimistic
+    setSaved(next);
     setError(null);
     try {
       if (next) await api("/api/wishlist", { method: "POST", body: JSON.stringify({ productId }) });
       else await api(`/api/wishlist/${productId}`, { method: "DELETE" });
       startTransition(() => router.refresh());
     } catch (e) {
-      setSaved(!next); // roll back
+      setSaved(!next);
       setError((e as Error).message);
     }
   }

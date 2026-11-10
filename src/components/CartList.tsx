@@ -20,7 +20,7 @@ export default function CartList({ initial }: { initial: Cart }) {
     setError(null);
     try {
       setCart(await request());
-      startTransition(() => router.refresh()); // keeps header badge in sync
+      startTransition(() => router.refresh());
     } catch (e) {
       setError((e as Error).message);
     } finally {

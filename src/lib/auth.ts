@@ -19,8 +19,6 @@ export const authOptions: NextAuthOptions = {
           const user = await authService.authenticate(credentials, request.headers ?? {});
           return user ? { id: user.id, name: user.name, email: user.email } : null;
         } catch (error) {
-          // NextAuth owns this route and normalizes errors in its callback flow.
-          // Keep the exposed error message generic and predictable for the UI.
           if (error instanceof RateLimitError) throw new Error("RATE_LIMITED");
           throw error;
         }

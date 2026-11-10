@@ -33,6 +33,5 @@ const raw: Seed[] = [
 export const products: Product[] = raw.map(({ seed, ...p }, i) => ({
   ...p,
   images: [img(seed), img(`${seed}-2`), img(`${seed}-3`)],
-  // Stable, staggered creation dates so "newest" sorting is deterministic
   createdAt: new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString(),
 }));

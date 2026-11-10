@@ -1,13 +1,3 @@
-/**
- * Tidewell API isolation smoke test (local development only).
- * Run from the project root with Next.js and DynamoDB Local running:
- *   node --env-file=.env.local scripts/check-api-isolation.mjs
- *
- * Creates two temporary accounts through the public API, signs them in using
- * NextAuth Credentials, checks account data isolation and input protections,
- * then removes only the generated account records from DynamoDB Local.
- * Existing accounts and product records are not changed.
- */
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -133,8 +123,6 @@ const testAccounts = [
 ];
 
 async function cleanup(account) {
-  // Only delete the unique identities created by this script. Never delete
-  // records based on an arbitrary account ID or a user-supplied email.
   if (!account.email.startsWith(`tidewell-api-${nonce}-`) || !/^acct-[a-f\d-]{36}$/i.test(account.id)) {
     throw new Error('Refusing cleanup of unexpected account identity');
   }
@@ -226,7 +214,6 @@ try {
   assert.equal(profileB.data?.data?.email, testAccounts[1].email);
   pass('profile API returns the correct owner');
 
-  // Client-supplied identifiers must not override the server-side session.
   const spoofedCart = await browserA.get(`/api/cart?userId=${encodeURIComponent(createdAccounts[1].id)}`);
   const spoofedUser = await browserA.get(`/api/user?userId=${encodeURIComponent(createdAccounts[1].id)}`);
   expectStatus(spoofedCart, 200, 'Cart with a forged userId query parameter');

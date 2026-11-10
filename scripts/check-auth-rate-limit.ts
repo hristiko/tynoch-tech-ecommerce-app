@@ -1,8 +1,3 @@
-/**
- * DynamoDB Local integration test for atomic authentication attempt limits.
- * Only temporary RATE# test records are created and removed.
- * Run with: npx tsx scripts/check-auth-rate-limit.ts
- */
 import "./load-env";
 import { randomUUID } from "node:crypto";
 import { DeleteCommand } from "@aws-sdk/lib-dynamodb";

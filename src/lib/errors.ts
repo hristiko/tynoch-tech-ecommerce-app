@@ -28,7 +28,6 @@ export class ConflictError extends AppError {
   }
 }
 
-/** Requests over the authentication quota. */
 export class RateLimitError extends AppError {
   constructor(public readonly retryAfterSeconds: number) {
     super("Too many attempts. Please try again later.", 429, "RATE_LIMITED", { retryAfterSeconds });

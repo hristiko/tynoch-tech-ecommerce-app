@@ -45,7 +45,6 @@ export const catalogService = {
     return [...all].sort((a, b) => b.rating - a.rating).slice(0, limit);
   },
 
-  /** Same category first, then shared tags; excludes the product itself. */
   async getRelated(product: Product, limit = 4): Promise<Product[]> {
     const sameCategory = await productRepo.listByCategory(product.categorySlug);
     return sameCategory

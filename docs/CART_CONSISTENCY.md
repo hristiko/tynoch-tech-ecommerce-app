@@ -1,33 +1,33 @@
-# Cart consistency (DynamoDB)
+# Keeping cart updates consistent
 
-The cart previously read an item, calculated a new quantity, then performed an unconditional `PutItem`. Two simultaneous additions could read the same old quantity and overwrite each other.
+The cart must handle two requests arriving at almost the same time. Without concurrency control, both requests could read a quantity of one, add one, and each write two. One addition would be lost.
 
-## Change
+## How Tidewell handles this
 
-- `cartRepo.compareAndPut(item, previous)` performs a conditional DynamoDB `PutItem`. New items require `attribute_not_exists(PK)`. Updated items require the version that the request read.
-- A conflict returns `false`, and the service reads the latest item and recalculates (up to eight attempts). Too much contention produces HTTP 409 rather than silently losing an update.
-- Strongly consistent cart reads (`GetItem` and the base-table `Query`) prevent a retry or response from relying on a stale cart record.
-- Cart records gain a numeric `version` field. **Existing rows do not need migration**: for rows without `version`, the first update checks both their old quantity and absence of a version before setting `version: 1`.
-- Guest import conditionally inserts guest-only cart items and conditionally deletes their original records, so it does not overwrite existing account cart items or discard a guest item updated mid-import.
+Each cart item has a version number. When a service updates an item, its DynamoDB write is accepted only if the version still matches the value that was read. If someone else changed the item first, the service retrieves the current value and tries the calculation again, up to eight attempts.
 
-## Validate against Docker DynamoDB Local
+New records use an `attribute_not_exists` condition. Older cart records without a `version` field still work: their next update checks the existing quantity and adds the first version. No database migration is required.
 
-Keep DynamoDB Local running with port 8000 exposed. Check `.env.local` points to that local endpoint, then run:
+Reads of cart records use DynamoDB's strongly consistent mode. Guest-cart imports also use conditional writes, so importing an item cannot overwrite an existing account cart line.
 
-```bash
+If the same record keeps changing and the retry limit is reached, the API reports a conflict instead of silently discarding an update.
+
+## Verify it locally
+
+Start DynamoDB Local, then run:
+
+```powershell
 npm run typecheck
 npm test
-npm run lint
 npm run db:test-cart
-npm run build
 ```
 
-`db:test-cart` exercises concurrent additions, stock caps, legacy cart rows, and guest import against **DynamoDB Local**, then deletes only its own temporary records. It refuses nonlocal DynamoDB endpoints. It does not modify existing real users' carts.
+The integration script tests simultaneous additions, stock and per-item limits, old unversioned records, and guest-to-account import. It only creates and removes its own temporary DynamoDB records.
 
-## Scope and limitations
+To test in the browser, start with one item and open its **product detail page** in two tabs. Click **Add to cart** in both tabs, then refresh the cart. If both additions succeeded and stock permits it, the total should be three.
 
-- This prevents lost updates to **individual cart records** within one DynamoDB region. It does not reserve inventory or make a checkout transaction. Product stock is read separately and may change independently.
-- Concurrent explicit quantity settings follow whichever conditional write succeeds last; a later remove may delete a recently added item. That is the intended ordering for these user commands, not inventory reservation.
-- This is not a multi-region DynamoDB global-table conflict solution.
-- Data can change again immediately after a successful read if a different request is in progress. The UI may need a refresh when another browser tab changes the cart.
-- The guest import operation is not a full all-or-nothing cross-record transaction, but individual cart insertions/deletions now have conditional protections.
+The `+` control on the cart page behaves differently: it submits an absolute quantity. Two stale tabs both changing quantity one to two can correctly leave a total of two, not three.
+
+## Limits
+
+This protection applies to cart records, not inventory reservations. Stock can change separately, and the application has no transactional checkout. Explicit quantity changes and removals also have their own ordering: the last successful action can determine the final value. The solution does not address DynamoDB multi-region global-table conflicts.

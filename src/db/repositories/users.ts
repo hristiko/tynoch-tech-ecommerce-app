@@ -12,7 +12,6 @@ export const userRepo = {
     return res.Item ? toUser(res.Item) : null;
   },
 
-  /** Creates the user only if it does not exist yet (idempotent). */
   async ensure(id: string): Promise<User> {
     const now = new Date().toISOString();
     const user: User = { id, name: "", email: "", createdAt: now, updatedAt: now };

@@ -20,7 +20,7 @@ describe("cart logic", () => {
   it("does not charge for an item that has gone out of stock", () => {
     expect(clampQuantity(3, 0)).toBe(0);
     const cart = buildCart([item("a", 3)], [product({ id: "a", stock: 0, priceCents: 1299 })]);
-    expect(cart.lines).toHaveLength(1); // still visible so the user can remove it
+    expect(cart.lines).toHaveLength(1);
     expect(cart.lines[0].quantity).toBe(0);
     expect(cart.lines[0].lineTotalCents).toBe(0);
     expect(cart.itemCount).toBe(0);

@@ -10,7 +10,6 @@ function createClient() {
   const base = new DynamoDBClient({
     region: env.region,
     endpoint: env.endpoint,
-    // Only pass explicit credentials when provided; otherwise the default provider chain is used.
     ...(env.accessKeyId && env.secretAccessKey
       ? { credentials: { accessKeyId: env.accessKeyId, secretAccessKey: env.secretAccessKey } }
       : {}),
@@ -20,7 +19,6 @@ function createClient() {
   });
 }
 
-/** Reused across hot reloads in dev and across invocations in serverless. */
 export const ddb = globalThis.__ddb ?? createClient();
 if (process.env.NODE_ENV !== "production") globalThis.__ddb = ddb;
 

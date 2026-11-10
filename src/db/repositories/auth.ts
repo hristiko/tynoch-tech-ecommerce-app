@@ -6,8 +6,6 @@ import { keys } from "../keys";
 import { ConflictError } from "@/lib/errors";
 import type { User } from "@/types";
 
-// The email lookup is an independent item so uniqueness can be enforced atomically.
-// Hashing the normalized email keeps it out of DynamoDB partition key names.
 function emailKey(email: string) {
   return { PK: `AUTH_EMAIL#${createHash("sha256").update(email).digest("hex")}`, SK: "LOOKUP" };
 }
@@ -43,8 +41,6 @@ export const authRepo = {
     } catch (error) {
       const e = error as { name?: string; CancellationReasons?: { Code?: string }[] };
       if (e.name === "TransactionCanceledException") {
-        // Some DynamoDB configurations omit cancellation reasons. Check whether
-        // the unique email lookup now exists before reporting a generic failure.
         if (e.CancellationReasons?.some((reason) => reason.Code === "ConditionalCheckFailed") ||
             (await this.findByEmail(user.email))) {
           throw new ConflictError("An account with this email already exists.");

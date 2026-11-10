@@ -1,10 +1,6 @@
-# Local development only: starts DynamoDB Local, not the Next.js application.
-# Do not run this alongside an existing DynamoDB container using port 8000.
 name: tidewell-local
 
 services:
-  # A newly created Docker volume can be root-owned, while DynamoDB Local runs
-  # as UID 1000. Set ownership before starting the database container.
   dynamodb-volume-init:
     image: alpine:3.21
     user: "0:0"

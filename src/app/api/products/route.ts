@@ -4,7 +4,6 @@ import { productQuerySchema } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/products?q=&category=&min=&max=&sort=
 export const GET = handle(async (req: Request) => {
   const params = Object.fromEntries(new URL(req.url).searchParams);
   const parsed = productQuerySchema.parse(params);

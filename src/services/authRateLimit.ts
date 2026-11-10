@@ -2,8 +2,6 @@ import type { RequestHeaders } from "@/lib/clientIdentity";
 import { authClientKey } from "@/lib/clientIdentity";
 import { rateLimitsRepo } from "@/db/repositories/rateLimits";
 
-// Every attempt counts, including successful requests. The counters are atomic
-// across server instances, unlike an in-memory Map in a Next.js process.
 export const authRateLimit = {
   async login(email: string, headers: RequestHeaders) {
     await rateLimitsRepo.consume({ scope: "login-client", identifier: authClientKey(headers), limit: 60, windowSeconds: 15 * 60 });

@@ -11,7 +11,6 @@ export const authService = {
     const data = registrationSchema.parse(input);
     await authRateLimit.register(data.email, headers);
     const now = new Date().toISOString();
-    // An account ID can never be mistaken for an unsigned guest UUID cookie.
     const user: User = { id: `acct-${randomUUID()}`, name: data.name, email: data.email, createdAt: now, updatedAt: now };
     const passwordHash = await hashPassword(data.password);
     await authRepo.create(user, passwordHash);

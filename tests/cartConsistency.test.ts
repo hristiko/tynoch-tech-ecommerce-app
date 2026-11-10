@@ -39,7 +39,6 @@ beforeEach(() => {
   mocks.list.mockImplementation(async () => [...cartItems.values()].map((it) => ({ ...it })));
   mocks.get.mockImplementation(async (_userId: string, id: string) => {
     const previous = cartItems.get(id);
-    // Allow multiple reads to observe the same version before writes begin.
     await Promise.resolve();
     return previous ? { ...previous } : null;
   });
@@ -65,7 +64,7 @@ describe("cart concurrent update behavior", () => {
     await Promise.all(Array.from({ length: 6 }, () => cartService.add("user-1", "p1", 1)));
     expect(cartItems.get("p1")?.quantity).toBe(6);
     expect(cartItems.get("p1")?.version).toBe(6);
-    expect(mocks.compareAndPut.mock.calls.length).toBeGreaterThan(6); // at least one conflict/retry
+    expect(mocks.compareAndPut.mock.calls.length).toBeGreaterThan(6);
   });
 
   it("limits concurrent additions to stock and the per-item maximum", async () => {

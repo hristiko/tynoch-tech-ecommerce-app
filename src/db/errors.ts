@@ -1,6 +1,5 @@
 import { AppError } from "@/lib/errors";
 
-/** Convert low-level AWS errors into AppErrors with safe messages. */
 export async function dbCall<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();

@@ -14,7 +14,6 @@ export default function ProfileForm({ user, emailReadOnly = false }: { user: Pic
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaved(false);
-    // Client-side validation using the same schema as the server
     const parsed = profileSchema.safeParse(values);
     if (!parsed.success) {
       const fieldErrors: typeof errors = {};

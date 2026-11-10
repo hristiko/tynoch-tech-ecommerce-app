@@ -1,21 +1,21 @@
-# Guest-session integrity
+# Guest sessions
 
-Guest carts, wishlists and profiles are keyed by a randomly generated UUID. Previously, the raw UUID was stored in `tw_uid`. A user able to replace that unsigned cookie with another guest UUID could request that guest's data.
+A guest needs a stable identifier so their cart and wishlist are available after a page refresh. Tidewell keeps that identifier in the `tw_uid` cookie.
 
-The server now stores `tw_uid=v1.<uuid>.<hmac>` using HMAC-SHA256 and the already-configured `NEXTAUTH_SECRET`. On every request the server verifies the signature in constant time before using the guest UUID. Modified, malformed, and unsigned cookies are rejected, and a new guest cookie is issued on the next guest write. This **does not** protect against theft of a complete valid cookie; HTTPS, `HttpOnly`, `SameSite=Lax`, `Secure` in production and a private signing secret remain necessary.
+Previously, the cookie contained only a UUID. Anyone who could substitute another guest's UUID could potentially request that guest's data. It now contains a signed value in the form `v1.<uuid>.<hmac>`.
 
-## Migration behavior
+The server checks the HMAC using `NEXTAUTH_SECRET` before trusting the identifier. The signature is checked with a constant-time comparison. A missing, altered or old unsigned cookie is rejected; the next guest write creates a new signed cookie. The cookie also uses `HttpOnly`, `SameSite=Lax`, and `Secure` when running in production.
 
-Existing **registered accounts**, their profiles, carts, and wishlists are unchanged. Existing unsigned guest cookies cannot be securely upgraded without accepting a spoofable identifier. They are intentionally rejected. Before deploying this change, sign in and import any guest-only products you want to preserve. Anonymous data associated with old unsigned cookies may remain in DynamoDB but is no longer accessible through those cookies.
+A signature prevents someone from inventing a valid cookie merely by guessing an ID. It does **not** protect a cookie that has already been stolen. HTTPS and ordinary session-security precautions are still necessary on a public site.
 
-Rotating `NEXTAUTH_SECRET` also invalidates existing signed guest cookies (and affects authenticated sessions). Keep the secret stable and private. A dedicated guest signing key or key rotation scheme could be added for a production service.
+## What happens to existing data?
 
-## Authorization testing
+Registered accounts and their carts are unaffected. Old unsigned guest cookies cannot be upgraded safely because the server can't verify who owns them. Guest-only items tied to such a cookie may remain in the database but cannot be recovered using the invalid cookie. Sign in and import guest items before applying this kind of change.
 
-1. Register two test accounts (A and B). Add different cart and wishlist items to each.
-2. Confirm signing into A never displays B's items, even after refreshing or opening a second browser.
-3. Confirm signing out and signing into B shows only B's items.
-4. In the browser's developer tools, replace `tw_uid` with a made-up UUID or modify any byte of its HMAC. Guest data must not load; the next guest cart write must issue a new signed cookie.
-5. As a guest, add an item, refresh, and verify it persists; then sign in and import it to your account.
+Changing `NEXTAUTH_SECRET` invalidates signed guest cookies and can affect authenticated sessions. Keep the value private and stable.
 
-Do not use real customer accounts or other people's cookies to perform these checks.
+## Check the behavior
+
+Run `npm test` for the signing and verification tests. To check browser behavior, create a guest cart, refresh, and confirm it remains. Then alter a character in `tw_uid` using developer tools and refresh again: the previous guest data should not load. Signing into an account should still show that account's own cart and wishlist.
+
+Use only accounts and cookies you control when testing.

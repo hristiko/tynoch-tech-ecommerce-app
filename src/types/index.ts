@@ -9,7 +9,6 @@ export interface Product {
   id: string;
   name: string;
   description: string;
-  /** Price in cents to avoid floating-point errors */
   priceCents: number;
   categorySlug: string;
   images: string[];
@@ -32,7 +31,6 @@ export interface CartItemRecord {
   productId: string;
   quantity: number;
   addedAt: string;
-  /** Optimistic-lock version. Legacy cart records may not have this field yet. */
   version?: number;
 }
 

@@ -1,6 +1,5 @@
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 
-// scrypt uses a random salt for every password. Never store plaintext passwords.
 const N = 1 << 15;
 const KEY_LENGTH = 64;
 const OPTIONS = { N, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };

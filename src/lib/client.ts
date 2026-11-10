@@ -1,6 +1,5 @@
 "use client";
 
-/** Small fetch wrapper for client components. Throws Error with a user-readable message. */
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {

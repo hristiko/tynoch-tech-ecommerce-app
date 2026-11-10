@@ -6,7 +6,6 @@ interface Props {
   values: { q?: string; category?: string; min?: string; max?: string; sort?: string };
 }
 
-/** Plain GET form: works without JavaScript and keeps filters in the URL (shareable, back-button friendly). */
 export default function FilterBar({ categories, values }: Props) {
   const active = Object.values(values).some(Boolean);
   return (

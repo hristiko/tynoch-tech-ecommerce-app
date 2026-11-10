@@ -46,8 +46,6 @@ export default function AccountAuthForm() {
         throw new Error("Incorrect email or password.");
       }
 
-      // Import guest-only items after the authenticated session cookie is issued.
-      // If import fails, the user stays signed in and can retry from the account page.
       let importFailed = false;
       try {
         await api("/api/account/import-guest", { method: "POST" });

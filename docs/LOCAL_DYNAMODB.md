@@ -1,17 +1,12 @@
-# Local DynamoDB setup (persistent storage)
+# Running DynamoDB Local with persistent storage
 
-This project runs the **Next.js application on the host** (for example, with
-`npm run dev`) and **DynamoDB Local in Docker**. The database is available at
-`http://127.0.0.1:8000`. This is development-only; it is not a public deployment.
+Tidewell runs Next.js on your computer and uses DynamoDB Local in a Docker container. The database listens on `127.0.0.1:8000`. This setup is for local development; it doesn't publish the store on the internet.
 
-## If Tidewell is already working on this computer
+The database uses a named Docker volume, `tidewell-dynamodb-data`. That matters because the default in-memory DynamoDB configuration loses its data when the container stops. A volume keeps account, cart and wishlist records across restarts.
 
-The existing `tidewell-dynamodb` container is already connected to a persistent
-named Docker volume called `tidewell-dynamodb-data`. **Do not run `docker compose
-up` alongside it**: both database containers would try to publish port 8000 and
-use the same volume. No migration is needed.
+## If you already have a working database
 
-Use:
+If you followed the migration steps and your existing container is named `tidewell-dynamodb`, start that container:
 
 ```powershell
 docker start tidewell-dynamodb
@@ -19,87 +14,71 @@ docker ps
 npm run dev
 ```
 
-If Docker reports that the container is already running, continue normally.
+Do **not** run `docker compose up` at the same time. Both containers would compete for port 8000 and could try to use the same writable volume. You don't need to migrate the data again.
 
-## Fresh setup on a new computer
+## Fresh installation on another computer
 
-These instructions are for **new installations**, where port 8000 is not
-already used by another database container.
+Install Node.js 22.12 or newer, npm and Docker Desktop. From the project directory, install dependencies and copy the environment template:
 
-1. Install Node.js 22.12 or newer, npm, Docker Desktop, and Docker Compose.
-2. Clone the repository and open a PowerShell terminal in its root directory.
-3. Install the exact recorded dependency versions:
+```powershell
+npm ci
+Copy-Item .env.example .env.local
+```
 
-   ```powershell
-   npm ci
-   Copy-Item .env.example .env.local
-   ```
+Set the following values in `.env.local`:
 
-4. In `.env.local`, set your local database and authentication configuration:
+```dotenv
+AWS_REGION=eu-central-1
+AWS_ACCESS_KEY_ID=local
+AWS_SECRET_ACCESS_KEY=local
+DYNAMODB_TABLE_NAME=tidewell-store
+DYNAMODB_ENDPOINT=http://localhost:8000
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=REPLACE_WITH_A_GENERATED_SECRET
+AUTH_TRUST_PROXY=false
+```
 
-   ```dotenv
-   AWS_REGION=eu-central-1
-   AWS_ACCESS_KEY_ID=local
-   AWS_SECRET_ACCESS_KEY=local
-   DYNAMODB_TABLE_NAME=tidewell-store
-   DYNAMODB_ENDPOINT=http://localhost:8000
-   NEXTAUTH_URL=http://localhost:3000
-   NEXTAUTH_SECRET=REPLACE_WITH_GENERATED_SECRET
-   ```
+Generate the secret locally:
 
-   Generate a secret locally using:
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+```
 
-   ```powershell
-   node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
-   ```
+Replace the placeholder with the generated value. Don't commit `.env.local`.
 
-   Replace the `NEXTAUTH_SECRET` placeholder with its output. Do not commit
-   `.env.local` to Git.
+If port 8000 is free and no other DynamoDB container is using the named volume, start the database:
 
-5. Start the persistent DynamoDB container:
+```powershell
+docker compose up -d
+docker compose ps
+```
 
-   ```powershell
-   docker compose up -d
-   docker compose ps
-   ```
+The Compose file gives the volume the permissions needed by DynamoDB Local's non-root user, then starts DynamoDB in file-backed mode with `-sharedDb -dbPath ./data`.
 
-   The Compose file initializes the volume permissions for DynamoDB Local's
-   non-root user, then starts the database with `-sharedDb -dbPath ./data`.
-   It binds port 8000 to the local computer only.
+For a new empty database only, initialize the table and product catalogue:
 
-6. For a **fresh, empty database only**, create the table and seed sample products:
+```powershell
+npm run db:create
+npm run db:seed
+```
 
-   ```powershell
-   npm run db:create
-   npm run db:seed
-   ```
+Start the app and open `http://localhost:3000`:
 
-7. Start the storefront:
+```powershell
+npm run dev
+```
 
-   ```powershell
-   npm run dev
-   ```
+The Compose file starts only DynamoDB. Next.js still runs separately through npm.
 
-   Open `http://localhost:3000`.
+## Stopping and keeping your data
 
-## Persistence and safety
+`docker compose stop` and `docker compose down` keep the named volume. **Do not run `docker compose down -v` or delete/prune the volume** unless you intend to erase the stored data. A persistent volume is not a backup; make a separate backup before destructive changes.
 
-DynamoDB Local stores its SQLite data in the named volume
-`tidewell-dynamodb-data`.
+Never run two containers that write to the same DynamoDB volume at once.
 
-- `docker compose stop` or `docker compose down` stops/removes containers but
-  keeps the named volume.
-- **Do not use** `docker compose down -v`, `docker volume rm`, or indiscriminate
-  volume-pruning commands: those can delete the database.
-- The volume is **not a backup**. Back it up separately before destructive
-  changes or migration.
-- Do not run two DynamoDB containers using the same writable volume.
-- Never run production credentials or public production traffic through this
-  local development setup.
+## Checks
 
-## Tests
-
-With the database and app running, validate:
+With Docker running:
 
 ```powershell
 npm run typecheck
@@ -108,10 +87,13 @@ npm run lint
 npm run build
 npm run db:test-cart
 npx tsx scripts/check-auth-rate-limit.ts
-node --env-file=.env.local scripts/check-api-isolation.mjs
 npm audit
 ```
 
-The API isolation script uses temporary local test accounts and cleans up
-records it creates. For an existing test database, do not recreate the table
-or reseed it just to run these checks.
+With Next.js running too, check the real API:
+
+```powershell
+node --env-file=.env.local scripts/check-api-isolation.mjs
+```
+
+These scripts use temporary records and account IDs. They do not require rebuilding or reseeding an existing database. The API test refuses to connect to a nonlocal DynamoDB endpoint.

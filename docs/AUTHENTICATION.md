@@ -1,34 +1,41 @@
-# Authenticated accounts (local development)
+# Accounts and sign-in
 
-## Workflow
+Tidewell supports both guests and registered users. Guests can browse and save items without giving an email address. Registering makes it possible to return to the same cart and wishlist from a different browser.
 
-1. Visitors initially use a signed `tw_uid` httpOnly cookie containing a guest UUID and HMAC and the existing guest cart/wishlist.
-2. `POST /api/auth/register` validates the form, hashes the password using scrypt (random 16-byte salt), and atomically creates three DynamoDB items:
-   - `PK=USER#acct-<uuid>, SK=PROFILE` stores name, normalized email, timestamps.
-   - `PK=USER#acct-<uuid>, SK=CREDENTIALS` stores only the salted password hash.
-   - `PK=AUTH_EMAIL#<sha256(normalized-email)>, SK=LOOKUP` stores the account ID and prevents duplicate registrations, via a DynamoDB transactional conditional put.
-3. `POST /api/auth/callback/credentials` is owned by NextAuth.js, which checks the email lookup and hash and issues an encrypted JWT cookie. Users cannot self-assign an account ID through the request body or guest cookie.
-4. The server checks `getServerSession(authOptions)` on each personalized page and API route. Authenticated IDs start with `acct-`; verified guest cookies are accepted only for guest data. No route should trust a client-supplied account ID.
-5. After successful sign-in, the client calls `POST /api/account/import-guest`. Account cart quantities win if a product exists in both carts; missing products are imported and wishlist entries are deduplicated. Imported guest entries are removed only after writes succeed. Out-of-stock guest items remain guest-only.
-6. `signOut()` removes the authenticated session cookie; the browser may still have the anonymous guest cookie.
+## Registration
 
-## Setup
+`POST /api/auth/register` checks the submitted name, email and password with Zod. Passwords must be at least 12 characters. The server normalizes the email, hashes the password with `scrypt` and a new random salt, and creates three records in one DynamoDB transaction:
 
-Install `next-auth@4.24.15` (a v4 release matching the existing Next.js 14 App Router). In `.env.local` set:
+| Record | Key | Contents |
+| --- | --- | --- |
+| Profile | `USER#acct-<uuid>` / `PROFILE` | Name, normalized email, timestamps |
+| Credentials | `USER#acct-<uuid>` / `CREDENTIALS` | Salted password hash |
+| Email lookup | `AUTH_EMAIL#<sha256(email)>` / `LOOKUP` | Account ID |
 
+The email lookup has a conditional write, so registering the same email twice is rejected even if the requests arrive together. Passwords are never stored as readable text.
+
+## Login and session ownership
+
+NextAuth.js v4 handles credentials sign-in and sign-out. Its Credentials provider looks up the email, checks the password hash and creates a session. When a personalized API route runs, the server reads the session and selects that account's records. A supplied `userId` query parameter or modified guest cookie cannot replace the account ID from the session.
+
+Without an authenticated session, the application can use a verified, signed guest cookie. These identities are deliberately separate: registered account IDs start with `acct-`, while guest IDs are UUIDs.
+
+## Importing guest items
+
+After sign-in, the browser can call `POST /api/account/import-guest`. Guest-only cart items and wishlist entries are moved into the account. If a product is already in the account cart, the account quantity is kept. The import skips unavailable products and removes guest entries only after the relevant destination operation completes.
+
+This import is made of several database operations, not one all-or-nothing transaction. Individual cart operations use conditional writes, but a failure in the middle of a multi-item import can leave some guest items for another attempt.
+
+## Local configuration
+
+Set `NEXTAUTH_URL=http://localhost:3000` and a private `NEXTAUTH_SECRET` in `.env.local`. Generate a secret with:
+
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 ```
-NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=<use a random 32-byte-or-longer secret>
-```
 
-Generate the secret once with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.
-Keep it private. No new DynamoDB table or index is needed; the three new record types use the existing PK/SK structure. Do not re-seed to create an account.
+Don't commit the secret. The account records use the existing DynamoDB table and indexes; no new table or reseeding is required.
 
-## Important limitations before public deployment
+## What isn't implemented
 
-- This is suitable for a **local demonstration**, not a public production authentication system without further work.
-- No email verification, forgotten-password flow, account deletion, session revocation, or multi-factor authentication.
-- Distributed DynamoDB request-rate limits now protect sign-in and registration; see [Authentication request limits](AUTH_RATE_LIMITING.md). Public deployment still needs anti-abuse monitoring, verified proxy configuration, and additional account-security controls.
-- Guest cookies are HMAC-signed using `NEXTAUTH_SECRET`. Knowing only another guest UUID is insufficient to impersonate them; stealing a complete signed cookie would still allow access until it expires. Old unsigned guest cookies are no longer trusted, so pre-upgrade anonymous carts/wishlists do not automatically carry over. Sign in and import them before upgrading.
-- The guest import operation is not a single database transaction. It is repeat-safe under normal sequential use but still needs concurrency testing.
-- Changing a registered email requires an atomic update of the email lookup and account record. It is disabled for now.
+There is no email verification, password-reset email, account deletion, multi-factor authentication or general session revocation flow. A registered email cannot be changed from the normal profile form because its lookup record would also need an atomic update. For request-rate limits, see [Authentication request limits](AUTH_RATE_LIMITING.md). For the guest cookie format and limitations, see [Guest sessions](GUEST_SESSION_SECURITY.md).

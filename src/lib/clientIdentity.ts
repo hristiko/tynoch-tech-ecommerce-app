@@ -8,11 +8,6 @@ function getHeader(headers: RequestHeaders, name: string): string | null {
   return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
 }
 
-/**
- * Only trust proxy IP headers when a controlled reverse proxy OVERWRITES them.
- * NextAuth's Credentials provider supplies headers as a plain object; Route
- * Handlers use Headers. Without a trusted proxy use a shared, conservative limit.
- */
 export function authClientKey(headers: RequestHeaders): string {
   if (process.env.AUTH_TRUST_PROXY !== "true") return "shared-client";
   const forwarded = getHeader(headers, "x-forwarded-for");

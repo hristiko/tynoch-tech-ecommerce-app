@@ -37,7 +37,6 @@ export const productRepo = {
     const unique = Array.from(new Set(ids));
     if (unique.length === 0) return [];
     const out: Product[] = [];
-    // BatchGet accepts at most 100 keys per call
     for (let i = 0; i < unique.length; i += 100) {
       const chunk = unique.slice(i, i + 100);
       const res = await dbCall("products.batchGet", () =>
@@ -48,12 +47,10 @@ export const productRepo = {
     return out;
   },
 
-  /** All products, newest first (GSI2). Fine for a catalogue of this size; paginate beyond a few thousand. */
   async listAll(): Promise<Product[]> {
     return queryAll({ IndexName: INDEX.byType, KeyConditionExpression: "GSI2PK = :t", ExpressionAttributeValues: { ":t": "TYPE#PRODUCT" }, ScanIndexForward: false });
   },
 
-  /** Products in a single category (GSI1). */
   async listByCategory(slug: string): Promise<Product[]> {
     return queryAll({ IndexName: INDEX.byCategory, KeyConditionExpression: "GSI1PK = :c", ExpressionAttributeValues: { ":c": `CATEGORY#${slug}` }, ScanIndexForward: false });
   },
