@@ -1,44 +1,171 @@
 # Tidewell
 
-Tidewell is a small online store built for a software engineering internship project. It sells a sample catalogue of home, desk, kitchen and everyday-carry products. The focus is on how the application works: browsing products, keeping a cart and wishlist, managing accounts, and storing data in DynamoDB.
+Tidewell is a full-stack e-commerce application developed as a software engineering internship project. It is a small online store with 16 sample products across four categories: Desk & Studio, Kitchen, Living, and Carry.
 
-This is a working storefront, not a checkout service. Payments, order processing and delivery tracking are outside the scope of the project.
+The purpose of the project is to demonstrate more than a storefront interface. Product browsing, shopping carts, wishlists, user accounts, and data persistence are handled by a Next.js backend connected to DynamoDB.
 
-## What you can do
+**Repository:** https://github.com/hristiko/tynoch-tech-ecommerce-app
 
-- Browse products by category, search by name or tags, filter by price and sort the results. Product pages show descriptions, stock availability and related items.
-- Add products to a cart, change quantities, remove items and see an updated subtotal. Prices are calculated in integer cents to avoid floating-point rounding errors.
-- Save and remove wishlist items without creating duplicates.
-- Shop as a guest or register with an email and password. An account keeps its own cart, wishlist and profile. Guest items can be imported after signing in.
-- Use the store on desktop or mobile. Pages have loading states, empty results, form feedback and a custom not-found page.
+Tidewell is a working demonstration store. Checkout, payments, order processing, and shipping are not implemented.
 
-The catalogue comes from seed data in `scripts/seed-data.ts`. Images are served locally from `public/images`. They illustrate sample products rather than specific manufacturer listings. For picture sources, review and the image-only DynamoDB update, see [Product images](docs/PRODUCT_IMAGES.md).
+## Features
+
+### Storefront
+
+- Responsive homepage, category pages, product listings, and individual product pages.
+- Search by product name and tags, category and price filters, and sorting.
+- Product details, availability, ratings, and related products.
+- Local product and category images, with source information documented where applicable.
+- Loading indicators, empty states, input feedback, error handling, and a custom 404 page.
+
+### Shopping cart and wishlist
+
+- Add products to the cart, change quantities, and remove items.
+- Show item counts and subtotals calculated from product prices in integer cents.
+- Respect available stock and per-product quantity limits; handle unavailable products.
+- Merge repeated additions into a single cart line.
+- Protect concurrent cart updates using conditional DynamoDB writes and retries.
+- Add or remove wishlist products without storing duplicates.
+
+### Accounts
+
+- Browse and use the cart or wishlist as a guest.
+- Register with an email address and password; sign in and out.
+- Keep each account's profile, cart, and wishlist separate from other accounts.
+- Restore saved cart and wishlist items after signing in again.
+- Import eligible guest items when signing into an account.
+- Update the account's display name. Changing the registered email is not supported.
+
+## Screenshots
+
+The following screenshots show the completed application running locally.
+
+### Homepage
+
+![Tidewell homepage](docs/screenshots/homepage.png)
+
+### Product catalogue and filters
+
+![Product listing with search and filters](docs/screenshots/products.png)
+
+### Product details
+
+![Individual product details](docs/screenshots/product-details.png)
+
+### Shopping cart
+
+![Shopping cart with quantities and subtotal](docs/screenshots/cart.png)
+
+### Wishlist
+
+![Saved wishlist products](docs/screenshots/wishlist.png)
+
+### Account
+
+![Signed-in account page](docs/screenshots/account.png)
+
+### Mobile layout
+
+![Homepage on a mobile screen](docs/screenshots/mobile.png)
 
 ## Technology
 
-| Part | Used in this project |
+| Area | Technology |
 | --- | --- |
-| Pages and API | Next.js 16.4.6, React 19, App Router and Route Handlers |
-| Language | TypeScript |
+| Frontend | Next.js 16 (App Router), React 19, TypeScript |
+| Backend and APIs | Next.js Route Handlers and server-side services |
+| Database | AWS DynamoDB; DynamoDB Local in Docker for development |
+| Authentication | NextAuth.js v4 with credentials-based login |
 | Styling | Tailwind CSS |
-| Database | DynamoDB, including DynamoDB Local in Docker |
-| Accounts | NextAuth.js v4, credentials login and `scrypt` password hashes |
 | Input validation | Zod 4 |
-| Tests | Vitest 5 and DynamoDB/API integration scripts |
-| Source control | Git and GitHub |
+| Testing | Vitest 5, DynamoDB Local checks, and HTTP API integration tests |
+| Version control | Git and GitHub |
 
-## Run it locally
+## Architecture
 
-You need **Node.js 22.12 or newer**, npm and Docker Desktop with Docker Compose. The commands below use Windows PowerShell.
+The application separates the interface, business rules, and database operations. Server-rendered pages can call the service layer directly; browser actions use the API routes.
+
+```text
+Browser / React components
+          |
+          v
+Next.js pages and API routes
+          |
+          v
+Services (catalogue, cart, wishlist, accounts)
+          |
+          v
+DynamoDB repositories
+          |
+          v
+DynamoDB
+```
+
+For example, when a customer adds a product to the cart, the API validates the request and calls the cart service. The service checks product availability and quantity limits, updates the cart record in DynamoDB, and returns the recalculated cart. Conditional writes prevent simultaneous requests from silently overwriting one another.
+
+### Project structure
+
+```text
+src/
+  app/                  Pages, loading/error pages and API endpoints
+  components/           Reusable interface components
+  services/             Catalogue, cart, wishlist and account rules
+  db/                   DynamoDB client, keys and repositories
+  lib/                  Authentication, validation and shared helpers
+  types/                Shared TypeScript definitions
+scripts/                Database setup, seed data and integration checks
+tests/                  Vitest unit tests
+public/images/          Local product and category images
+docs/                   Technical guides and screenshots
+compose.yaml            Persistent DynamoDB Local configuration
+```
+
+## Database design
+
+Tidewell uses a single DynamoDB table, named `tidewell-store` by default, with `PK` (partition key) and `SK` (sort key) attributes. Two secondary indexes support product and category listings.
+
+| Record type | Example key pair | What it stores |
+| --- | --- | --- |
+| Product | `PRODUCT#id` / `METADATA` | Details, price, stock and image paths |
+| Category | `CATEGORY#slug` / `METADATA` | Category information and image |
+| User profile | `USER#id` / `PROFILE` | Name and email |
+| Account credentials | `USER#acct-id` / `CREDENTIALS` | Salted password hash |
+| Email lookup | `AUTH_EMAIL#hash` / `LOOKUP` | Unique email-to-account mapping |
+| Cart item | `USER#id` / `CART#productId` | Quantity and update version |
+| Wishlist item | `USER#id` / `WISHLIST#productId` | A saved product |
+| Rate-limit counter | `RATE#scope#hash` / `WINDOW#number` | Authentication attempt counts |
+
+Product and category reads use DynamoDB queries and item lookups. Registration creates the related account records in a transaction. Cart updates use version-aware conditional writes; wishlist writes prevent duplicate entries.
+
+Search and price filtering are performed in the service layer after fetching the small sample catalogue. This is suitable for the current project but would need a more scalable search approach for a much larger store.
+
+## Run the application locally
+
+### Requirements
+
+- Node.js 22.12 or newer and npm.
+- Docker Desktop with Docker Compose.
+- Git.
+
+These instructions use Windows PowerShell. The Next.js application runs on your computer, while DynamoDB Local runs inside Docker.
+
+### 1. Clone the repository and install dependencies
 
 ```powershell
 git clone https://github.com/hristiko/tynoch-tech-ecommerce-app.git
 cd tynoch-tech-ecommerce-app
 npm ci
+```
+
+### 2. Configure the environment
+
+Copy the example configuration:
+
+```powershell
 Copy-Item .env.example .env.local
 ```
 
-Edit `.env.local` for the local database:
+For local development, set these values in `.env.local`:
 
 ```dotenv
 AWS_REGION=eu-central-1
@@ -47,132 +174,99 @@ AWS_SECRET_ACCESS_KEY=local
 DYNAMODB_TABLE_NAME=tidewell-store
 DYNAMODB_ENDPOINT=http://localhost:8000
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=REPLACE_WITH_A_GENERATED_SECRET
+NEXTAUTH_SECRET=REPLACE_WITH_YOUR_GENERATED_SECRET
 AUTH_TRUST_PROXY=false
 ```
 
-Create a secret with:
+Generate a secret:
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 ```
 
-Paste the generated value into `NEXTAUTH_SECRET`. Don't share or commit `.env.local`.
+Replace the `NEXTAUTH_SECRET` placeholder with the generated value. The AWS credentials shown above are dummy values for DynamoDB Local. **Never commit `.env.local` or actual credentials.**
 
-**On a new computer**, start DynamoDB with the supplied persistent-volume configuration:
+### 3. Start DynamoDB Local
+
+For a **new installation**, create the persistent database container:
 
 ```powershell
 docker compose up -d
 ```
 
-**If you already have the working `tidewell-dynamodb` container**, don't start Compose alongside it. Start the existing container instead:
+The provided `compose.yaml` configures a Docker volume so data survives container restarts. It also initializes the volume permissions required by DynamoDB Local.
+
+If you already have the working `tidewell-dynamodb` container, **do not start Compose alongside it**. Start the existing container instead:
 
 ```powershell
 docker start tidewell-dynamodb
 ```
 
-Only when setting up a **new, empty database**, create its table and load the sample catalogue:
+The database is available at `http://localhost:8000`. For setup details, see [Local DynamoDB setup](docs/LOCAL_DYNAMODB.md).
+
+### 4. Create the table and sample catalogue
+
+**Only for a new, empty database:**
 
 ```powershell
 npm run db:create
 npm run db:seed
 ```
 
-Start the application:
+These commands create the table and load the sample products and categories. Do not reseed an existing database merely to restart the application, since seed data may overwrite product information.
+
+### 5. Start Tidewell
 
 ```powershell
 npm run dev
 ```
 
-Open `http://localhost:3000`. The Next.js app runs on your computer; Docker runs the database on port 8000. Neither becomes a public website just because Docker is running.
+Open **http://localhost:3000** in your browser.
 
-For the Docker volume, permissions, stopping/restarting containers and avoiding data loss, see [Local DynamoDB setup](docs/LOCAL_DYNAMODB.md). In particular, **do not run `docker compose down -v`** on a database containing data you want to keep.
+For a production-style local build, run:
 
-## How the application is organized
-
-The frontend is built with React components. A page can call a service directly when rendering on the server; a browser action such as adding an item sends a request to a Next.js API route. API routes validate the request and call services. Services handle the shopping rules and call repository functions, which are responsible for DynamoDB reads and writes.
-
-```text
-Browser / Next.js page
-        |
-        v
-Route handler (for browser API requests)
-        |
-        v
-Service (cart, catalogue, accounts, wishlist)
-        |
-        v
-DynamoDB repository
-        |
-        v
-DynamoDB table
+```powershell
+npm run build
+npm run start
 ```
 
-The main directories reflect that separation:
+This setup is local. Running DynamoDB in Docker does **not** make the storefront publicly available.
 
-| Path | Responsibility |
-| --- | --- |
-| `src/app/` | Pages, loading/error pages and API routes |
-| `src/components/` | Reusable interface components |
-| `src/services/` | Catalogue, cart, wishlist and account logic |
-| `src/db/repositories/` | DynamoDB queries and updates |
-| `src/lib/` | Validation, configuration, sessions and shared utilities |
-| `src/types/` | Shared TypeScript types |
-| `scripts/` | Database setup, sample data and integration checks |
-| `tests/` | Vitest unit tests |
-| `docs/` | Notes on authentication, cart consistency and local database setup |
+### Persistence notes
 
-For example, clicking **Add to cart** sends a product ID and quantity to `/api/cart`. The service checks whether the product exists and is in stock, then conditionally updates the user's cart record. The response contains the recalculated cart. If another request changed that record in the meantime, the service rereads it and retries rather than silently overwriting an addition.
+The Docker volume is named `tidewell-dynamodb-data`. It retains database records after a normal stop or restart, but is not a backup. Avoid `docker compose down -v` or other commands that remove the volume if you want to keep existing accounts and cart data.
 
-## DynamoDB data and operations
+## API endpoints
 
-The application uses one DynamoDB table, `tidewell-store` by default. Each record has a partition key (`PK`) and sort key (`SK`); two secondary indexes support category and catalogue listings.
+Successful responses generally contain `data`; failures contain an `error` object. Input validation and ownership checks are handled on the server.
 
-| Data | Example keys | How it is used |
+| Method | Endpoint | Purpose |
 | --- | --- | --- |
-| Product | `PRODUCT#id` / `METADATA` | Product details and stock |
-| Category | `CATEGORY#slug` / `METADATA` | Store categories |
-| Profile | `USER#id` / `PROFILE` | User name and email |
-| Credentials | `USER#acct-id` / `CREDENTIALS` | Salted password hash, never plaintext |
-| Email lookup | `AUTH_EMAIL#hash` / `LOOKUP` | Find an account and enforce unique emails |
-| Cart item | `USER#id` / `CART#productId` | Quantity and a version for concurrent updates |
-| Wishlist item | `USER#id` / `WISHLIST#productId` | One saved record per product |
-| Rate-limit counter | `RATE#scope#hash` / `WINDOW#number` | Shared login and registration request counts |
+| `GET` | `/api/products` | List, search, filter and sort products |
+| `GET` | `/api/products/[id]` | Product details and related products |
+| `GET` | `/api/categories` | List categories |
+| `GET`, `POST` | `/api/cart` | View cart or add an item |
+| `PATCH`, `DELETE` | `/api/cart/[productId]` | Change quantity or remove an item |
+| `GET`, `POST` | `/api/wishlist` | View wishlist or save an item |
+| `DELETE` | `/api/wishlist/[productId]` | Remove a saved item |
+| `GET`, `PUT` | `/api/user` | View or update a profile |
+| `POST` | `/api/auth/register` | Register an account |
+| NextAuth routes | `/api/auth/[...nextauth]` | Login, session and logout |
+| `POST` | `/api/account/import-guest` | Import eligible guest shopping data |
 
-The application reads products with `GetItem`, category/product indexes with `Query`, and groups of product IDs with `BatchGetItem`. Account creation uses a DynamoDB transaction. Cart updates use conditional writes and strongly consistent reads; wishlist additions use a condition to prevent duplicates. Cart totals use current product prices rather than duplicating prices in cart records.
+## Authentication and security
 
-Search and price filtering currently run in the service layer after a DynamoDB query. This is reasonable for the small sample catalogue, but it would need a different approach for a much larger store.
+Passwords are not stored in plain text. They are hashed using Node.js `scrypt` with a random salt. NextAuth manages signed-in sessions, while guests are identified using an HMAC-signed cookie. Registered accounts are resolved from the server-side session rather than from user IDs supplied by the browser.
 
-## API
+Additional safeguards include Zod validation, origin checks on state-changing requests, rate limits for login and registration, conditional DynamoDB writes, and controlled error responses. These features reduce common mistakes, but the application has not undergone a full production security audit.
 
-API responses use a `data` field for success or an `error` field for failure. The principal routes are:
+The following capabilities are not included: email verification, password recovery, account deletion, multi-factor authentication, and production operational monitoring.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/api/products`, `/api/products/[id]` | List/search products or load a product |
-| GET | `/api/categories` | List categories |
-| GET, POST | `/api/cart` | Read cart or add a product |
-| PATCH, DELETE | `/api/cart/[productId]` | Set a quantity or remove a product |
-| GET, POST | `/api/wishlist` | Read or add wishlist items |
-| DELETE | `/api/wishlist/[productId]` | Remove a wishlist item |
-| GET, PUT | `/api/user` | Read or update the profile |
-| POST | `/api/auth/register` | Register an account |
-| NextAuth routes | `/api/auth/[...nextauth]` | Sign-in, sessions and sign-out |
-| POST | `/api/account/import-guest` | Move eligible guest items into an account |
+Further details are in [Authentication](docs/AUTHENTICATION.md), [Authentication rate limiting](docs/AUTH_RATE_LIMITING.md), [Guest-session security](docs/GUEST_SESSION_SECURITY.md), and [Cart consistency](docs/CART_CONSISTENCY.md).
 
-Requests are validated with Zod. The server derives account ownership from the authenticated session, not from a user ID supplied in the request. Invalid input, missing products, conflicts and database errors are returned with appropriate HTTP errors and user-readable messages.
+## Testing
 
-Registered email addresses cannot be changed through the general profile form; that would also require updating the unique email lookup record.
-
-## Accounts and security
-
-Passwords are hashed with `scrypt` and a random salt. NextAuth manages authenticated sessions, while guest visitors receive an HMAC-signed `tw_uid` cookie. Registration and login attempts have DynamoDB-backed rate limits. See [Authentication](docs/AUTHENTICATION.md), [Request limits](docs/AUTH_RATE_LIMITING.md) and [Guest sessions](docs/GUEST_SESSION_SECURITY.md) for the exact behavior.
-
-This is a local development project, **not a security-hardened public service**. There is no email verification, password reset, account deletion, or multi-factor authentication. Public hosting would need further security work and operational monitoring.
-
-## Run the checks
-
-First run the standard code checks:
+Run the standard checks from the project root:
 
 ```powershell
 npm run typecheck
@@ -182,25 +276,42 @@ npm run build
 npm audit
 ```
 
-The database tests need DynamoDB Local running:
+The Vitest suite covers cart rules, catalogue filtering, account password hashing, rate limiting, and guest-identity signing.
+
+With DynamoDB Local running, run the database checks:
 
 ```powershell
 npm run db:test-cart
 npx tsx scripts/check-auth-rate-limit.ts
 ```
 
-For the API isolation check, keep both DynamoDB and the Next.js app running in separate terminals:
+To test account isolation through the real HTTP API, keep both DynamoDB Local and the Next.js application running, then execute in a separate terminal:
 
 ```powershell
 node --env-file=.env.local scripts/check-api-isolation.mjs
 ```
 
-The integration scripts use temporary test records and clean up after themselves. The API script creates two temporary accounts to check registration, sign-in, cart/wishlist separation and unauthorized requests. It refuses a nonlocal DynamoDB endpoint. Don't reseed an existing database just to run the tests.
+That script uses temporary test accounts to verify registration, login, cart and wishlist separation, profile ownership, invalid requests, and logout behavior. It removes the temporary account records afterward and refuses to use a nonlocal DynamoDB endpoint.
 
-## Submission and current limits
+## Product images
 
-The internship assignment asks for a GitHub link, a documented project and **screenshots of the finished application**. A live URL is requested only *if deployed*; local development is sufficient for the documented build and testing work.
+The sample catalogue is defined in `scripts/seed-data.ts`. Product and category images are stored under `public/images/` and referenced by their paths in DynamoDB. The images are illustrative examples for this demonstration store.
 
-Screenshots still need to be added to `docs/screenshots/`: homepage, filtered product list, product detail, cart, wishlist, empty state, not-found page and a mobile-sized view. Replace the unrelated sample photos before taking the final screenshots.
+For an existing database, use the image-only updater rather than reseeding products:
 
-Tidewell does not process payments or place orders, and its cart does not reserve inventory. Docker's persistent volume keeps local data across restarts but is **not a backup**.
+```powershell
+node --env-file=.env.local scripts/update-catalog-images.mjs
+node --env-file=.env.local scripts/update-catalog-images.mjs --apply
+```
+
+The first command checks the required files and records without modifying the database. The second updates the stored image references. See [Product images](docs/PRODUCT_IMAGES.md) and [Image credits](docs/IMAGE_CREDITS.md) for details and source attribution.
+
+## Current scope and limitations
+
+Tidewell demonstrates browsing and managing a small online catalogue with real server-side persistence. It does not process orders, charge customers, calculate final shipping costs, or reserve inventory at checkout. The checkout control is deliberately inactive.
+
+The project is intended to run locally for development and evaluation. Deploying it publicly would require an accessible database, secure production configuration, additional account-recovery controls, and operational monitoring.
+
+## Project submission
+
+The internship submission includes the [GitHub repository](https://github.com/hristiko/tynoch-tech-ecommerce-app), this README, technical documentation, and screenshots of the application. A live project URL can be provided if the application is deployed, but public deployment is not required by the assignment.
