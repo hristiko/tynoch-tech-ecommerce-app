@@ -23,13 +23,13 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React, 
 - Duplicates are prevented at the database level with a conditional write
 
 **User data**
-- Anonymous visitors can shop using a browser cookie; account sessions take priority when signed in
+- Anonymous visitors can shop using an HMAC-signed browser cookie; account sessions take priority when signed in
 - Registration, password-based sign-in and sign-out using NextAuth.js (JWT sessions)
 - Account profiles, password hash records and unique email lookups in DynamoDB (atomic transaction)
 - Guest cart/wishlist items are imported into the account after successful sign-in; existing account quantities win on overlaps
 - Account email is read-only after registration; password reset and email verification are not implemented
 
-See [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations. Rate limiting for sign-in and registration is described in [Authentication request limits](docs/AUTH_RATE_LIMITING.md).
+See [Guest-session integrity](docs/GUEST_SESSION_SECURITY.md) and [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations. Rate limiting for sign-in and registration is described in [Authentication request limits](docs/AUTH_RATE_LIMITING.md).
 
 **Engineering**
 - Layered code: UI → services → repositories → DynamoDB

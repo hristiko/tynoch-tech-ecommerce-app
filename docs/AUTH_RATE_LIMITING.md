@@ -42,4 +42,4 @@ NextAuth v4's Credentials callback handles its own HTTP response. Login attempts
 
 ## Remaining production concerns
 
-Request-rate limits alone do not make authentication production ready. The app still needs email verification, recovery, abuse monitoring, and validated reverse-proxy configuration. Generic credentials errors should not reveal whether an email account exists. The existing unsigned guest cookie also remains a separate security limitation.
+Request-rate limits alone do not make authentication production ready. The app still needs email verification, recovery, abuse monitoring, and validated reverse-proxy configuration. Generic credentials errors should not reveal whether an email account exists. Guest cookies are HMAC-signed; stolen valid cookies still require the usual session-theft protections.
