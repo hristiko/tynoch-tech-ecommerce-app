@@ -12,7 +12,7 @@ This is a working storefront, not a checkout service. Payments, order processing
 - Shop as a guest or register with an email and password. An account keeps its own cart, wishlist and profile. Guest items can be imported after signing in.
 - Use the store on desktop or mobile. Pages have loading states, empty results, form feedback and a custom not-found page.
 
-The catalogue comes from seed data in `scripts/seed-data.ts`. Its current images use a sample-photo service, so some photographs do not match the product names. Those images need replacing before final submission.
+The catalogue comes from seed data in `scripts/seed-data.ts`. Images are served locally from `public/images`. They illustrate sample products rather than specific manufacturer listings. For picture sources, review and the image-only DynamoDB update, see [Product images](docs/PRODUCT_IMAGES.md).
 
 ## Technology
 
