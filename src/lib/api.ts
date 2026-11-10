@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { AppError } from "./errors";
+import { AppError, RateLimitError } from "./errors";
 
 export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ data }, { status });
@@ -21,7 +21,7 @@ export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response
       if (err instanceof AppError) {
         return NextResponse.json(
           { error: { code: err.code, message: err.message, details: err.details } },
-          { status: err.status }
+          { status: err.status, ...(err instanceof RateLimitError ? { headers: { "Retry-After": String(err.retryAfterSeconds) } } : {}) }
         );
       }
       console.error("[api] unexpected error", err);

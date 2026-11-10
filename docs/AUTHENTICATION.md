@@ -28,7 +28,7 @@ Keep it private. No new DynamoDB table or index is needed; the three new record 
 
 - This is suitable for a **local demonstration**, not a public production authentication system without further work.
 - No email verification, forgotten-password flow, account deletion, session revocation, or multi-factor authentication.
-- Add distributed login/registration rate limiting, anti-abuse controls, and audit logs before opening registration publicly.
+- Distributed DynamoDB request-rate limits now protect sign-in and registration; see [Authentication request limits](AUTH_RATE_LIMITING.md). Public deployment still needs anti-abuse monitoring, verified proxy configuration, and additional account-security controls.
 - Guest cookies are legacy unsigned identifiers; account data is not accessible through them, but access to another guest's random cookie would allow guest data access. Sign guest cookies before production use.
 - The guest import operation is not a single database transaction. It is repeat-safe under normal sequential use but still needs concurrency testing.
 - Changing a registered email requires an atomic update of the email lookup and account record. It is disabled for now.

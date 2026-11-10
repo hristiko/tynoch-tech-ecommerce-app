@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { authService } from "@/services/auth";
+import { RateLimitError } from "@/lib/errors";
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
@@ -13,9 +14,16 @@ export const authOptions: NextAuthOptions = {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
-        const user = await authService.authenticate(credentials);
-        return user ? { id: user.id, name: user.name, email: user.email } : null;
+      async authorize(credentials, request) {
+        try {
+          const user = await authService.authenticate(credentials, request.headers ?? {});
+          return user ? { id: user.id, name: user.name, email: user.email } : null;
+        } catch (error) {
+          // NextAuth owns this route and normalizes errors in its callback flow.
+          // Keep the exposed error message generic and predictable for the UI.
+          if (error instanceof RateLimitError) throw new Error("RATE_LIMITED");
+          throw error;
+        }
       },
     }),
   ],

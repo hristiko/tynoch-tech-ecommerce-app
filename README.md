@@ -29,7 +29,7 @@ A full-stack e-commerce storefront built with **Next.js 14 (App Router), React, 
 - Guest cart/wishlist items are imported into the account after successful sign-in; existing account quantities win on overlaps
 - Account email is read-only after registration; password reset and email verification are not implemented
 
-See [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations.
+See [Authentication details](docs/AUTHENTICATION.md) for account record keys, the guest-import behavior, and security limitations. Rate limiting for sign-in and registration is described in [Authentication request limits](docs/AUTH_RATE_LIMITING.md).
 
 **Engineering**
 - Layered code: UI → services → repositories → DynamoDB

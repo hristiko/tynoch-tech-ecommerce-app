@@ -40,6 +40,9 @@ export default function AccountAuthForm() {
           setMode("login");
           throw new Error("Account created, but automatic sign-in failed. Please sign in.");
         }
+        if (result?.error?.includes("RATE_LIMITED")) {
+          throw new Error("Too many sign-in attempts. Please try again later.");
+        }
         throw new Error("Incorrect email or password.");
       }
 
