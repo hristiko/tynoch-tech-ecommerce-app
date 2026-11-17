@@ -3,16 +3,22 @@ import { ddb, TABLE } from "../client";
 import { dbCall } from "../errors";
 import { keys, stripKeys } from "../keys";
 import type { User } from "@/types";
+import { NotFoundError } from "@/lib/errors";
 
 const toUser = (item: Record<string, unknown>) => stripKeys(item) as unknown as User;
 
 export const userRepo = {
   async get(id: string): Promise<User | null> {
-    const res = await dbCall("users.get", () => ddb.send(new GetCommand({ TableName: TABLE, Key: keys.user(id) })));
+    const res = await dbCall("users.get", () => ddb.send(new GetCommand({ TableName: TABLE, Key: keys.user(id), ConsistentRead: true })));
     return res.Item ? toUser(res.Item) : null;
   },
 
   async ensure(id: string): Promise<User> {
+    if (id.startsWith("acct-")) {
+      const existing = await this.get(id);
+      if (!existing) throw new NotFoundError("Account no longer exists");
+      return existing;
+    }
     const now = new Date().toISOString();
     const user: User = { id, name: "", email: "", createdAt: now, updatedAt: now };
     try {

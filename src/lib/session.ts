@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "./auth";
 import { newGuestId, signGuestId, verifyGuestCookie } from "./guestIdentity";
+import { userRepo } from "@/db/repositories/users";
 
 const COOKIE = "tw_uid";
 const ONE_YEAR = 60 * 60 * 24 * 365;
@@ -35,7 +36,8 @@ export async function getOrCreateGuestUserId(): Promise<string> {
 async function getAccountId(): Promise<string | null> {
   const session = await getServerSession(authOptions);
   const id = session?.user?.id;
-  return id && ACCOUNT_ID.test(id) ? id : null;
+  if (!id || !ACCOUNT_ID.test(id)) return null;
+  return (await userRepo.get(id)) ? id : null;
 }
 
 export async function getViewerUserId(): Promise<string | null> {

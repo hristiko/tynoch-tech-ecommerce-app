@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html { min-height: 100%; background: #f6f7f3; }
+body { margin: 0; color: #202725; font-family: Arial, Helvetica, sans-serif; }
+button, input { font: inherit; }
+button:disabled { opacity: 0.6; cursor: not-allowed; }
+:focus-visible { outline: 2px solid #385548; outline-offset: 3px; }
