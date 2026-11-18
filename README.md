@@ -469,7 +469,35 @@ A final manual check is to edit a product in the admin dashboard and refresh its
 
 ### Admin dashboard
 
-Admin screenshots should be added to `docs/screenshots/` before the final internship submission. Suggested captures: overview and sales charts, product management, category management, user management, carts and wishlists. Their images can be linked here once the files are committed, avoiding broken links in the meantime.
+### Admin dashboard
+
+**Dashboard overview**
+
+![Admin dashboard overview](docs/screenshots/admin-dashboard.png)
+
+**Sales analytics**
+
+![Sales analytics](docs/screenshots/admin-sales.png)
+
+**Product management**
+
+![Product management](docs/screenshots/admin-products.png)
+
+**Category management**
+
+![Category management](docs/screenshots/admin-categories.png)
+
+**User management**
+
+![User management](docs/screenshots/admin-users.png)
+
+**Cart management**
+
+![Cart management](docs/screenshots/admin-carts.png)
+
+**Wishlist management**
+
+![Wishlist management](docs/screenshots/admin-wishlists.png)
 
 ## 14. Documentation, Images and Limitations
 
