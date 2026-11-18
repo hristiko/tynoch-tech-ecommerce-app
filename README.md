@@ -469,8 +469,6 @@ A final manual check is to edit a product in the admin dashboard and refresh its
 
 ### Admin dashboard
 
-### Admin dashboard
-
 **Dashboard overview**
 
 ![Admin dashboard overview](docs/screenshots/admin-dashboard.png)
